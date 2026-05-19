@@ -3,48 +3,43 @@ import clsx from "clsx";
 /**
  * EV-cell — renders one matrix-cell EV value.
  *
- * Used in the Solver Grid's 4-column EV matrix (one cell per harness).
- * Two axes:
+ * Used in the Solver Grid's EV matrix. Two axes:
  *   - sign:       positive | negative   (decides green vs red)
  *   - magnitude:  1..5                  (decides heat depth)
  *
- * 10 canonical variants matching the Figma master "EV-cell" (file
- * OvWgOsrPH5t3hL4l5bIazx, component id 13:51).
+ * 10 canonical variants matching Figma master "EV-cell" (id 13:51).
  *
- * Layout: large mono numeric (font/mono, 22px) on a heat-token fill, with a
- * small Inter caption underneath. 48px tall (v2 redteam reduced from 56).
+ * Layout (per Figma canon, VERTICAL auto-layout, padTRBL [6,8,6,8]):
+ *   ┌─────────────────────┐
+ *   │       MAG 4         │  ← label on TOP (Inter Regular 10px)
+ *   │      +0.247         │  ← numeric on BOTTOM (JetBrains Mono Medium 14px)
+ *   └─────────────────────┘
+ *   120 × 48, radius/md
  *
- * The text-on-fill contrast rule (from the v2 redteam fix):
- *   - magnitude 1-2: light heat fills (e.g. heat/productivity/200 #7CDDB7).
- *                    Use `bg/canvas` for both numeric and caption so the
- *                    dark text reads on the light fill.
- *   - magnitude 3-5: darker heat fills. Use `text/primary` for numeric,
- *                    `text/secondary` for caption.
+ * Text-on-fill contrast rule (v2 redteam fix locked in canon):
+ *   - magnitude 1-2 → light fills (heat/*-100, heat/*-200): use `bg/canvas` text
+ *   - magnitude 3-5 → darker fills: use `text/primary` for BOTH label and numeric
+ *
+ * Winner cell: 2px `status/warning` border (the gold ring on Harness B in Solver Grid).
  */
 
 export type EVSign = "positive" | "negative";
 export type EVMagnitude = 1 | 2 | 3 | 4 | 5;
 
 export interface EVCellProps {
-  /** The numeric value to display, e.g. "+0.52" or "−0.30". Sign included. */
+  /** Label rendered on top, e.g. "MAG 4" or "Harness B". */
+  label: string;
+  /** Numeric below, e.g. "+0.247". Include the sign character. */
   value: string;
-  /** Caption underneath the numeric, e.g. "+EV · 50 runs". */
-  caption?: string;
-  /** Sign axis — picks the heat hue (productivity green vs pollution red). */
   sign: EVSign;
-  /** Magnitude axis 1-5 — picks the heat depth + text color rule. */
   magnitude: EVMagnitude;
-  /**
-   * Mark this cell as the winner — adds a 2px status/warning gold border.
-   * Used on the Harness B cell in the Solver Grid.
-   */
+  /** Winner ring: 2px status/warning border (used on the top harness). */
   winner?: boolean;
-  /** Optional click handler for drill-down. */
   onClick?: () => void;
   className?: string;
 }
 
-const FILL_BG_CLASS: Record<EVSign, Record<EVMagnitude, string>> = {
+const FILL_BG: Record<EVSign, Record<EVMagnitude, string>> = {
   positive: {
     1: "bg-heat-productivity-100",
     2: "bg-heat-productivity-200",
@@ -61,34 +56,35 @@ const FILL_BG_CLASS: Record<EVSign, Record<EVMagnitude, string>> = {
   },
 };
 
-const isLightFill = (magnitude: EVMagnitude): boolean => magnitude <= 2;
+const isLightFill = (m: EVMagnitude): boolean => m <= 2;
 
 export function EVCell({
+  label,
   value,
-  caption,
   sign,
   magnitude,
   winner = false,
   onClick,
   className,
 }: EVCellProps) {
-  const fill = FILL_BG_CLASS[sign][magnitude];
+  const fill = FILL_BG[sign][magnitude];
   const light = isLightFill(magnitude);
-  const numericColor = light ? "text-bg-canvas" : "text-text-primary";
-  const captionColor = light ? "text-bg-canvas" : "text-text-secondary";
+  const textColor = light ? "text-bg-canvas" : "text-text-primary";
   const ringClass = winner
     ? "border-status-warning border-2"
-    : "border-border-hairline border";
+    : "border-transparent border";
 
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`EV ${value}${caption ? ` · ${caption}` : ""}`}
+      aria-label={`${label} · EV ${value}`}
       className={clsx(
+        // canon: 120×48, radius/md, no stroke by default (winner adds 2px ring)
         "h-12 w-[120px] rounded-md transition-opacity",
-        "flex flex-col items-center justify-center gap-px",
-        "px-3 py-2",
+        "flex flex-col items-center justify-center",
+        // canon padding: padTRBL [6,8,6,8]
+        "px-2 py-1.5 gap-0.5",
         "hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary",
         fill,
         ringClass,
@@ -97,14 +93,21 @@ export function EVCell({
       data-sign={sign}
       data-magnitude={magnitude}
     >
-      <span className={clsx("font-mono text-xl rg-tabular leading-none", numericColor)}>
+      {/* canon order: LABEL on top */}
+      <span className={clsx("font-sans text-[10px] leading-none font-normal", textColor)}>
+        {label}
+      </span>
+      {/* canon order: NUMERIC below — JetBrains Mono Medium 14px (NOT 20px) */}
+      <span
+        className={clsx(
+          "font-mono leading-none rg-tabular",
+          // canon: 14px (between Tailwind text-sm 12 and text-md 14 — our scale's md is 14)
+          "text-md font-medium",
+          textColor,
+        )}
+      >
         {value}
       </span>
-      {caption && (
-        <span className={clsx("text-[10px] leading-none mt-0.5", captionColor)}>
-          {caption}
-        </span>
-      )}
     </button>
   );
 }

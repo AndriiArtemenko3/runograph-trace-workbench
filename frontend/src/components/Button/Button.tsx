@@ -4,19 +4,34 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 /**
  * Button — chrome action primitive.
  *
- * Variants: \`kind\` (primary / secondary / icon) × \`state\` (default / hover /
- * pressed / disabled) = 12. Bit-locked to Figma master "Button" (file
- * OvWgOsrPH5t3hL4l5bIazx, component set id 15:26).
+ * Variants: `kind` (primary / secondary / icon) × `state` (default / hover /
+ * pressed / disabled) = 12. Bit-locked to Figma master "Button" (id 15:26).
  *
- * Height fixed at 32px for v0.3 alpha — one size, no size variants.
+ * Canon dimensions: 96×32 for primary/secondary; 32×32 for icon. Radius/md.
+ * Canon text: Inter Medium 13px. Canon padding: padTRBL [0,12,0,12].
  *
- * v2 redteam fix applied: primary-disabled uses bg/panel + text/tertiary +
- * border/subtle (≥3:1 contrast). The previous bg/elevated + text/disabled
- * was 1.4:1 — a hard WCAG fail.
+ * State map (per canon):
  *
- * Hover/pressed states cycle the accent fill: accent/primary → accent/hover →
- * accent/pressed. The :hover and :active CSS pseudo-classes drive the
- * runtime state; the explicit \`state\` prop is for Storybook + tests.
+ *   primary:
+ *     default: fill accent/primary, NO stroke
+ *     hover:   fill accent/hover,   NO stroke
+ *     pressed: fill accent/pressed, NO stroke
+ *     disabled: fill bg/panel, stroke border/subtle, text text/tertiary  ← v2 redteam fix
+ *
+ *   secondary:
+ *     default: fill bg/panel,    stroke border/subtle
+ *     hover:   fill bg/elevated, stroke border/subtle  ← LIGHTER on hover
+ *     pressed: fill bg/sunken,   stroke border/subtle  ← DARKER on press
+ *     disabled: fill bg/panel,   stroke border/hairline, text text/disabled
+ *
+ *   icon (32×32):
+ *     default: fill bg/panel,    stroke border/hairline, glyph text/primary
+ *     hover:   fill bg/elevated, stroke border/hairline, glyph text/primary
+ *     pressed: fill bg/sunken,   stroke border/hairline, glyph text/primary
+ *     disabled: fill bg/panel,   stroke border/hairline, glyph text/disabled
+ *
+ * Live :hover and :active transitions wired; explicit `state` prop is for
+ * Storybook + tests.
  */
 
 export type ButtonKind = "primary" | "secondary" | "icon";
@@ -25,7 +40,7 @@ export type ButtonState = "default" | "hover" | "pressed" | "disabled";
 export interface ButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "type"> {
   kind?: ButtonKind;
-  /** Forces a visual state — primarily for Storybook + tests. Live UI uses :hover/:active. */
+  /** Force a visual state — for Storybook + regression tests. Live UI uses :hover/:active. */
   state?: ButtonState;
   icon?: ReactNode;
   children?: ReactNode;
@@ -33,87 +48,40 @@ export interface ButtonProps
 
 interface StateStyles {
   bg: string;
+  /** Empty string means no stroke (primary default/hover/pressed). */
   border: string;
   fg: string;
 }
 
+const NO_BORDER = "border-transparent";
+
 const STYLES: Record<ButtonKind, Record<ButtonState, StateStyles>> = {
   primary: {
-    default: {
-      bg: "bg-accent-primary",
-      border: "border-accent-primary",
-      fg: "text-text-primary",
-    },
-    hover: {
-      bg: "bg-accent-hover",
-      border: "border-accent-hover",
-      fg: "text-text-primary",
-    },
-    pressed: {
-      bg: "bg-accent-pressed",
-      border: "border-accent-pressed",
-      fg: "text-text-primary",
-    },
-    disabled: {
-      bg: "bg-bg-panel",
-      border: "border-border-subtle",
-      fg: "text-text-tertiary",
-    },
+    default: { bg: "bg-accent-primary", border: NO_BORDER, fg: "text-text-primary" },
+    hover: { bg: "bg-accent-hover", border: NO_BORDER, fg: "text-text-primary" },
+    pressed: { bg: "bg-accent-pressed", border: NO_BORDER, fg: "text-text-primary" },
+    disabled: { bg: "bg-bg-panel", border: "border-border-subtle", fg: "text-text-tertiary" },
   },
   secondary: {
-    default: {
-      bg: "bg-bg-elevated",
-      border: "border-border-subtle",
-      fg: "text-text-primary",
-    },
-    hover: {
-      bg: "bg-bg-panel",
-      border: "border-border-strong",
-      fg: "text-text-primary",
-    },
-    pressed: {
-      bg: "bg-bg-sunken",
-      border: "border-border-strong",
-      fg: "text-text-primary",
-    },
-    disabled: {
-      bg: "bg-bg-sunken",
-      border: "border-border-hairline",
-      fg: "text-text-disabled",
-    },
+    default: { bg: "bg-bg-panel", border: "border-border-subtle", fg: "text-text-primary" },
+    hover: { bg: "bg-bg-elevated", border: "border-border-subtle", fg: "text-text-primary" },
+    pressed: { bg: "bg-bg-sunken", border: "border-border-subtle", fg: "text-text-primary" },
+    disabled: { bg: "bg-bg-panel", border: "border-border-hairline", fg: "text-text-disabled" },
   },
   icon: {
-    default: {
-      bg: "bg-bg-elevated",
-      border: "border-border-subtle",
-      fg: "text-text-secondary",
-    },
-    hover: {
-      bg: "bg-bg-panel",
-      border: "border-border-strong",
-      fg: "text-text-primary",
-    },
-    pressed: {
-      bg: "bg-bg-sunken",
-      border: "border-border-strong",
-      fg: "text-text-primary",
-    },
-    disabled: {
-      bg: "bg-bg-sunken",
-      border: "border-border-hairline",
-      fg: "text-text-disabled",
-    },
+    default: { bg: "bg-bg-panel", border: "border-border-hairline", fg: "text-text-primary" },
+    hover: { bg: "bg-bg-elevated", border: "border-border-hairline", fg: "text-text-primary" },
+    pressed: { bg: "bg-bg-sunken", border: "border-border-hairline", fg: "text-text-primary" },
+    disabled: { bg: "bg-bg-panel", border: "border-border-hairline", fg: "text-text-disabled" },
   },
 };
 
-/** Live hover/pressed driven by :hover/:active. Disabled is opt-in via prop. */
 const LIVE_TRANSITIONS: Record<ButtonKind, string> = {
-  primary:
-    "hover:bg-accent-hover hover:border-accent-hover active:bg-accent-pressed active:border-accent-pressed",
+  primary: "hover:bg-accent-hover active:bg-accent-pressed",
   secondary:
-    "hover:bg-bg-panel hover:border-border-strong active:bg-bg-sunken active:border-border-strong",
+    "hover:bg-bg-elevated active:bg-bg-sunken",
   icon:
-    "hover:bg-bg-panel hover:border-border-strong hover:text-text-primary active:bg-bg-sunken active:border-border-strong",
+    "hover:bg-bg-elevated active:bg-bg-sunken",
 };
 
 export function Button({
@@ -125,13 +93,13 @@ export function Button({
   className,
   ...rest
 }: ButtonProps) {
-  // If `disabled` is true (HTML prop), force the disabled visual state.
   const effectiveState: ButtonState = disabled ? "disabled" : state ?? "default";
   const styles = STYLES[kind][effectiveState];
   const useLiveStates = !disabled && state === undefined;
 
   const isIconOnly = kind === "icon" && !children;
-  const sizeClass = isIconOnly ? "w-8 h-8 px-0" : "h-8 px-4";
+  // canon: icon 32×32, others 96×32 (we let HUG happen by default via px-3 + flex)
+  const sizeClass = isIconOnly ? "w-8 h-8 px-0" : "h-8 px-3";
 
   return (
     <button
@@ -139,8 +107,10 @@ export function Button({
       disabled={disabled}
       aria-disabled={disabled}
       className={clsx(
-        "rounded-md border font-sans text-sm font-medium",
-        "inline-flex items-center justify-center gap-2",
+        "rounded-md border font-sans font-medium",
+        // canon: Inter Medium 13px — our `text-base` token is 13px
+        "text-base",
+        "inline-flex items-center justify-center gap-1.5",
         "transition-colors",
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-primary",
         sizeClass,
