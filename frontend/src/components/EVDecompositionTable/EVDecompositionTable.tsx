@@ -48,6 +48,7 @@ export function EVDecompositionTable({
 }: EVDecompositionTableProps) {
   return (
     <section
+      role="table"
       aria-label="EV decomposition"
       className={clsx(
         "rounded-lg bg-bg-panel border border-border-hairline overflow-hidden",
@@ -56,24 +57,26 @@ export function EVDecompositionTable({
       )}
       data-canon="evdecomp-17:31"
     >
-      <div
-        className={clsx(
-          "grid grid-cols-[1fr_44px_88px] gap-3",
-          "px-3.5 py-2.5",
-          "bg-bg-sunken",
-          "text-text-secondary text-2xs font-medium uppercase tracking-wide",
-        )}
-        role="row"
-      >
-        <span className="font-sans" role="columnheader">
-          Signal
-        </span>
-        <span className="font-mono text-right" role="columnheader">
-          Weight
-        </span>
-        <span className="font-mono text-right" role="columnheader">
-          Contribution
-        </span>
+      <div role="rowgroup">
+        <div
+          className={clsx(
+            "grid grid-cols-[1fr_44px_88px] gap-3",
+            "px-3.5 py-2.5",
+            "bg-bg-sunken",
+            "text-text-secondary text-2xs font-medium uppercase tracking-wide",
+          )}
+          role="row"
+        >
+          <span className="font-sans" role="columnheader">
+            Signal
+          </span>
+          <span className="font-mono text-right" role="columnheader">
+            Weight
+          </span>
+          <span className="font-mono text-right" role="columnheader">
+            Contribution
+          </span>
+        </div>
       </div>
       <div role="rowgroup">
         {rows.map((r, i) => (
@@ -112,6 +115,7 @@ export function EVDecompositionTable({
           </div>
         ))}
       </div>
+      <div role="rowgroup">
       <div
         role="row"
         className={clsx(
@@ -137,6 +141,7 @@ export function EVDecompositionTable({
         >
           {composite}
         </span>
+      </div>
       </div>
     </section>
   );

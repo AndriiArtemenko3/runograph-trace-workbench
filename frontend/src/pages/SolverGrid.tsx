@@ -1,12 +1,14 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import clsx from "clsx";
 import { Button } from "../components/Button";
 import { EVCell } from "../components/EVCell";
-import { TreeNode } from "../components/TreeNode";
-import { StatusEntry, type StatusTone } from "../components/StatusEntry";
 import { NodeEVCell } from "../components/NodeEVCell";
 import { RecommendationPill } from "../components/RecommendationPill";
 import { EVDecompositionTable } from "../components/EVDecompositionTable";
+import { TopBar } from "../components/composites/TopBar";
+import { LeftPane, type LeftPaneSection } from "../components/composites/LeftPane";
+import { BottomBar, type BottomBarEntry } from "../components/composites/BottomBar";
+import type { SolverView } from "../components/ViewSwitcher";
 import { useSolverGrid } from "../api/useSolverGrid";
 import type {
   EVDecomposition,
@@ -14,25 +16,28 @@ import type {
   Recommendation,
   SolverGridResponse,
   StageDecompRow,
-  StageRow,
 } from "../api/types";
 
 /**
- * Solver Grid page — Path B commit 1 + iter-2 reshape + commit-3 fetch wiring.
+ * Solver Grid page — Path B build sequence complete.
  *
  * Data: fetched from GET /api/v1/solver-grid via useSolverGrid(). The page
- * renders loading / error / ready states. Same canon layout as commit-1:
- * top chrome (56) + 320 / 760 / 360 panes + 36 footer.
+ * renders loading / error / ready states. Canon layout:
+ *   top chrome (56) + 320 / 760 / 360 panes + 36 footer.
  *
- * Components in this page:
- *   - Real:   Button, EVCell, TreeNode (12 + 10 + 6 variants in Storybook)
- *   - Stub:   Harness summary cards (top),     Figma master 31:9   → composite (lands as part of commit 10 TopBar/composite work)
- *             Failure-class breakdown,         Figma master 34:38  → later
- *             Recommendation pill (top right), Figma master 22:14  → commit 6
- *             EV decomposition table (mid),    Figma master 24:10  → commit 7
- *             Stage-decomposition table,       Figma master 35:58  → derived from commit 5 atoms
- *             Status-bar entry (bottom),       Figma master 27:33  → commit 4
- *             Weight-profile selector (top),   Figma master 29:18  → commit 9
+ * Page now assembles entirely from real components:
+ *   chrome   TopBar (composite) + ViewSwitcher (atom) + Button (atom)
+ *   left     LeftPane (composite) + TreeNode (atom)
+ *   center   HarnessSummaryRow + PerTaskMatrix (page-local sections)
+ *            EVCell (atom) in the matrix; Failure-class still stubbed
+ *   right    RecommendationPill (atom) + EVDecompositionTable (atom)
+ *            + StageDecompositionTable (page-local section using NodeEVCell)
+ *            + 3 Buttons (atoms)
+ *   footer   BottomBar (composite) + StatusEntry (atom)
+ *
+ * Only the Failure-class breakdown ships as a stub — its real
+ * component lands when the Heat-map page or Editor view need it
+ * (deferred per the Q3 plan).
  */
 
 function PlaceholderBox({
@@ -91,128 +96,6 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
         <p className="text-text-secondary text-xs mt-1">{subtitle}</p>
       ) : null}
     </div>
-  );
-}
-
-function ViewSwitcher() {
-  const views: { id: string; label: string; active?: boolean }[] = [
-    { id: "matrix", label: "Matrix", active: true },
-    { id: "heatmap", label: "Heat-map" },
-    { id: "stagetree", label: "Stage-tree" },
-    { id: "editor", label: "Editor" },
-  ];
-  return (
-    <div
-      className="flex items-center bg-bg-elevated border border-border-hairline rounded-md p-0.5"
-      role="tablist"
-      aria-label="Solver views"
-    >
-      {views.map((v) => (
-        <button
-          key={v.id}
-          type="button"
-          role="tab"
-          aria-selected={v.active ?? false}
-          className={clsx(
-            "h-8 px-3 rounded-sm font-sans text-base font-medium",
-            "transition-colors",
-            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-primary",
-            v.active
-              ? "bg-accent-primary text-bg-canvas"
-              : "text-text-secondary hover:text-text-primary",
-          )}
-          data-view={v.id}
-        >
-          {v.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function TopBar({ weightProfile }: { weightProfile: string }) {
-  return (
-    <header
-      className={clsx(
-        "h-14 shrink-0 flex items-center justify-between",
-        "px-4 gap-3",
-        "bg-bg-panel border-b border-border-hairline",
-      )}
-      data-canon="topbar-31:4"
-    >
-      <div className="flex items-center gap-2">
-        <span className="font-sans text-md font-medium text-text-primary">
-          RunoGraph
-        </span>
-        <span className="text-text-secondary font-mono text-xs">
-          / 03 Solver Grid
-        </span>
-      </div>
-
-      <ViewSwitcher />
-
-      <div className="flex items-center gap-2">
-        <PlaceholderBox
-          label={`Weight: ${weightProfile}`}
-          figmaId="29:18"
-          className="h-8 w-40"
-          compact
-        />
-        <Button kind="primary">Run Sim</Button>
-      </div>
-    </header>
-  );
-}
-
-function LeftPane({
-  harnesses,
-  stages,
-}: {
-  harnesses: Harness[];
-  stages: StageRow[];
-}) {
-  const harnessRows = harnesses.map((h) => ({
-    label: h.name,
-    value: h.ev,
-    selected: h.winner,
-  }));
-  const stageRows = stages.map((s) => ({
-    label: s.stage,
-    value: s.ev,
-    selected: s.selected,
-  }));
-  const sections = [
-    { title: "Harnesses", rows: harnessRows },
-    { title: "Stages", rows: stageRows },
-  ];
-  return (
-    <aside
-      aria-label="Harnesses and stages"
-      className={clsx(
-        "w-[320px] shrink-0",
-        "bg-bg-panel border-r border-border-hairline",
-        "flex flex-col",
-      )}
-      data-canon="leftpane-31:5"
-    >
-      {sections.map((s) => (
-        <div key={s.title} className="px-2 pt-4">
-          <div className="px-2 pb-1 text-text-secondary text-xs uppercase tracking-wide">
-            {s.title}
-          </div>
-          <div className="flex flex-col">
-            {s.rows.map((r) => (
-              <TreeNode
-                key={r.label}
-                label={r.label}
-                value={r.value}
-                interaction={r.selected ? "selected" : "default"}
-              />
-            ))}
-          </div>
-        </div>
-      ))}
-    </aside>
   );
 }
 
@@ -378,13 +261,13 @@ function StageDecompositionTable({ rows }: { rows: StageDecompRow[] }) {
         Stage decomposition · EV by pipeline stage
       </h3>
       <div className="grid grid-cols-[1fr_repeat(4,64px)] gap-x-2 gap-y-1 items-center">
-        <span className="text-text-tertiary text-2xs font-mono uppercase tracking-wide">
+        <span className="text-text-secondary text-2xs font-mono uppercase tracking-wide">
           stage
         </span>
         {(["A", "B", "C", "D"] as const).map((h) => (
           <span
             key={h}
-            className="text-text-tertiary text-2xs font-mono text-center uppercase"
+            className="text-text-secondary text-2xs font-mono text-center uppercase"
           >
             {h}
           </span>
@@ -453,51 +336,6 @@ function RightPane({
   );
 }
 
-function BottomBar({ data }: { data: SolverGridResponse | null }) {
-  const winner = data?.harnesses.find((h) => h.winner);
-  const simsTotal = data
-    ? `${data.iterComplete.toLocaleString()} / ${data.iterTotal.toLocaleString()}`
-    : "—";
-  type Entry = { tone: StatusTone; label: string; detail: string };
-  const left: Entry[] = [
-    { tone: "info", label: "sims", detail: simsTotal },
-    { tone: "info", label: "Ollama llama-70b", detail: "GPU 78% · 24GB / 80GB" },
-    {
-      tone: "success",
-      label: winner ? `Top: Harness ${winner.id}` : "Top: —",
-      detail: winner ? `${winner.ev} · 94% pass` : "",
-    },
-  ];
-  const right: Entry[] = [
-    { tone: "success", label: "workers 8/8", detail: "p50 1.4s · p95 5.2s" },
-    { tone: "success", label: "v0.3-alpha", detail: "14:22" },
-  ];
-  return (
-    <footer
-      className={clsx(
-        // Canon px-5 (24 px) on the chrome bar — pane wrappers stay at px-4
-        // for harmony, but the bottom bar follows the canon Figma 125:96.
-        "h-9 shrink-0 flex items-center justify-between",
-        "px-5 gap-4",
-        // Canon bg = bg-elevated (not bg-panel) per Figma Chrome / Bottom bar.
-        "bg-bg-elevated border-t border-border-hairline",
-      )}
-      data-canon="bottombar-31:8"
-    >
-      <div className="flex items-center gap-5 min-w-0">
-        {left.map((e) => (
-          <StatusEntry key={e.label} {...e} />
-        ))}
-      </div>
-      <div className="flex items-center gap-5 min-w-0">
-        {right.map((e) => (
-          <StatusEntry key={e.label} {...e} />
-        ))}
-      </div>
-    </footer>
-  );
-}
-
 function LoadingPane() {
   return (
     <div
@@ -522,18 +360,72 @@ function ErrorPane({ message }: { message: string }) {
   );
 }
 
+function buildLeftPaneSections(data: SolverGridResponse): LeftPaneSection[] {
+  return [
+    {
+      title: "Harnesses",
+      rows: data.harnesses.map((h) => ({
+        label: h.name,
+        value: h.ev,
+        selected: h.winner,
+      })),
+    },
+    {
+      title: "Stages",
+      rows: data.stages.map((s) => ({
+        label: s.stage,
+        value: s.ev,
+        selected: s.selected,
+      })),
+    },
+  ];
+}
+
+function buildBottomBarEntries(
+  data: SolverGridResponse | null,
+): { left: BottomBarEntry[]; right: BottomBarEntry[] } {
+  const winner = data?.harnesses.find((h) => h.winner);
+  const simsTotal = data
+    ? `${data.iterComplete.toLocaleString()} / ${data.iterTotal.toLocaleString()}`
+    : "—";
+  return {
+    left: [
+      { tone: "info", label: "sims", detail: simsTotal },
+      { tone: "info", label: "Ollama llama-70b", detail: "GPU 78% · 24GB / 80GB" },
+      {
+        tone: "success",
+        label: winner ? `Top: Harness ${winner.id}` : "Top: —",
+        detail: winner ? `${winner.ev} · 94% pass` : "",
+      },
+    ],
+    right: [
+      { tone: "success", label: "workers 8/8", detail: "p50 1.4s · p95 5.2s" },
+      { tone: "success", label: "v0.3-alpha", detail: "14:22" },
+    ],
+  };
+}
+
 export function SolverGrid() {
   const state = useSolverGrid();
+  const [activeView, setActiveView] = useState<SolverView>("matrix");
+  const bottomEntries = buildBottomBarEntries(
+    state.status === "ready" ? state.data : null,
+  );
   return (
     <div className="min-h-screen w-screen flex flex-col bg-bg-canvas text-text-primary">
       <h1 className="sr-only">RunoGraph Solver Grid</h1>
       <TopBar
-        weightProfile={state.status === "ready" ? state.data.weightProfile : "balanced"}
+        crumb="/ 03 Solver Grid"
+        weightProfile={
+          state.status === "ready" ? state.data.weightProfile : "balanced"
+        }
+        activeView={activeView}
+        onViewChange={setActiveView}
       />
       <main className="flex-1 flex min-h-0">
         {state.status === "ready" ? (
           <>
-            <LeftPane harnesses={state.data.harnesses} stages={state.data.stages} />
+            <LeftPane sections={buildLeftPaneSections(state.data)} />
             <CenterPane data={state.data} />
             <RightPane
               stageDecomposition={state.data.stageDecomposition}
@@ -547,7 +439,7 @@ export function SolverGrid() {
           <ErrorPane message={state.error} />
         )}
       </main>
-      <BottomBar data={state.status === "ready" ? state.data : null} />
+      <BottomBar left={bottomEntries.left} right={bottomEntries.right} />
     </div>
   );
 }
