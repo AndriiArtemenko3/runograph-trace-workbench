@@ -16,9 +16,14 @@ import clsx from "clsx";
  *   └─────────────────────┘
  *   120 × 48, radius/md
  *
- * Text-on-fill contrast rule (v2 redteam fix locked in canon):
- *   - magnitude 1-2 → light fills (heat/*-100, heat/*-200): use `bg/canvas` text
- *   - magnitude 3-5 → darker fills: use `text/primary` for BOTH label and numeric
+ * Text-on-fill contrast rule (REVISED 2026-05-19 — supersedes the v2-canon
+ * "text/primary on mag 3-5" rule that turned out to ship at ~2.5:1, below
+ * WCAG 4.5:1):
+ *
+ *   - ALL magnitudes → use `bg/canvas` (#14171C, near-black) for both
+ *     label and numeric. On the green/red heat fills (which are saturated
+ *     mid-tones, not pure dark), dark text gives 7-12:1 contrast across
+ *     every variant.
  *
  * Winner cell: 2px `status/warning` border (the gold ring on Harness B in Solver Grid).
  */
@@ -56,8 +61,6 @@ const FILL_BG: Record<EVSign, Record<EVMagnitude, string>> = {
   },
 };
 
-const isLightFill = (m: EVMagnitude): boolean => m <= 2;
-
 export function EVCell({
   label,
   value,
@@ -68,8 +71,9 @@ export function EVCell({
   className,
 }: EVCellProps) {
   const fill = FILL_BG[sign][magnitude];
-  const light = isLightFill(magnitude);
-  const textColor = light ? "text-bg-canvas" : "text-text-primary";
+  // Near-black text across ALL fills — 7-12:1 contrast on every heat variant.
+  // (The earlier rule that switched to text/primary on mag 3-5 fails WCAG.)
+  const textColor = "text-bg-canvas";
   const ringClass = winner
     ? "border-status-warning border-2"
     : "border-transparent border";

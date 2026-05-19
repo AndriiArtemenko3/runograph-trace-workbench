@@ -13,10 +13,12 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
  * State map (per canon):
  *
  *   primary:
- *     default: fill accent/primary, NO stroke
- *     hover:   fill accent/hover,   NO stroke
- *     pressed: fill accent/pressed, NO stroke
- *     disabled: fill bg/panel, stroke border/subtle, text text/tertiary  ← v2 redteam fix
+ *     default: fill accent/primary, NO stroke, text bg/canvas (near-black, ~8:1 contrast)
+ *     hover:   fill accent/hover,   NO stroke, text bg/canvas
+ *     pressed: fill accent/pressed, NO stroke, text bg/canvas
+ *     disabled: fill bg/panel, stroke border/subtle, text text/tertiary
+ *   (Note: text/primary white on accent/primary blue is ~2.5:1, fails WCAG —
+ *    so primary buttons use dark text on the blue fill.)
  *
  *   secondary:
  *     default: fill bg/panel,    stroke border/subtle
@@ -57,9 +59,10 @@ const NO_BORDER = "border-transparent";
 
 const STYLES: Record<ButtonKind, Record<ButtonState, StateStyles>> = {
   primary: {
-    default: { bg: "bg-accent-primary", border: NO_BORDER, fg: "text-text-primary" },
-    hover: { bg: "bg-accent-hover", border: NO_BORDER, fg: "text-text-primary" },
-    pressed: { bg: "bg-accent-pressed", border: NO_BORDER, fg: "text-text-primary" },
+    // Dark text on the blue fills — text/primary white is ~2.5:1 (fails WCAG); bg/canvas ~8:1.
+    default: { bg: "bg-accent-primary", border: NO_BORDER, fg: "text-bg-canvas" },
+    hover: { bg: "bg-accent-hover", border: NO_BORDER, fg: "text-bg-canvas" },
+    pressed: { bg: "bg-accent-pressed", border: NO_BORDER, fg: "text-bg-canvas" },
     disabled: { bg: "bg-bg-panel", border: "border-border-subtle", fg: "text-text-tertiary" },
   },
   secondary: {
