@@ -1,0 +1,12 @@
+{
+  "name": "runograph-app",
+  "private": true,
+  "version": "0.3.0-alpha.0",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter frontend dev",
+    "storybook": "pnpm --filter frontend storybook",
+    "build": "pnpm --filter frontend build"
+  },
+  "packageManager": "pnpm@9.12.0"
+}

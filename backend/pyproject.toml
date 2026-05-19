@@ -1,0 +1,44 @@
+[project]
+name = "runograph-backend"
+version = "0.3.0a0"
+description = "Sim engine + FastAPI surface for the runograph-app desktop solver"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Andrii Artemenko" }]
+license = { text = "BUSL-1.1" }
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "sqlalchemy>=2.0",
+    "aiosqlite>=0.20",
+    "duckdb>=1.1",
+    "httpx>=0.28",
+    "anthropic>=0.39",
+    "openai>=1.55",
+    "pyyaml>=6.0",
+    "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

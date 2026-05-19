@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+  font-family: var(--rg-font-sans);
+}
+
+body {
+  background-color: var(--rg-bg-canvas);
+  color: var(--rg-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* tabular-nums for any numeric column */
+.rg-tabular {
+  font-variant-numeric: tabular-nums;
+}
