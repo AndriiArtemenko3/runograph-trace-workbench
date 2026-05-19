@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { Button } from "../components/Button";
 import { EVCell, type EVSign, type EVMagnitude } from "../components/EVCell";
+import { TreeNode } from "../components/TreeNode";
 
 /**
  * Solver Grid page — Path B commit 1 + iter-2 reshape.
@@ -233,10 +234,24 @@ function TopBar() {
   );
 }
 
+type LeftPaneRow = { label: string; value?: string; selected?: boolean };
+
 function LeftPane() {
-  const sections: { title: string; rows: string[] }[] = [
-    { title: "Harnesses", rows: MOCK_HARNESSES.map((h) => h.name) },
-    { title: "Stages", rows: ["plan", "search", "edit", "test", "review"] },
+  const harnessRows: LeftPaneRow[] = MOCK_HARNESSES.map((h) => ({
+    label: h.name,
+    value: h.ev,
+    selected: h.winner,
+  }));
+  const stageRows: LeftPaneRow[] = [
+    { label: "plan", value: "+0.04" },
+    { label: "search", value: "+0.07" },
+    { label: "edit", value: "+0.31", selected: true },
+    { label: "test", value: "+0.06" },
+    { label: "review", value: "+0.04" },
+  ];
+  const sections: { title: string; rows: LeftPaneRow[] }[] = [
+    { title: "Harnesses", rows: harnessRows },
+    { title: "Stages", rows: stageRows },
   ];
   return (
     <aside
@@ -248,19 +263,18 @@ function LeftPane() {
       )}
       data-canon="leftpane-31:5"
     >
-      {sections.map((s, idx) => (
-        <div key={s.title} className={clsx("px-4", idx === 0 ? "pt-4" : "pt-4")}>
-          <div className="pb-2 text-text-secondary text-xs uppercase tracking-wide">
+      {sections.map((s) => (
+        <div key={s.title} className="px-2 pt-4">
+          <div className="px-2 pb-1 text-text-secondary text-xs uppercase tracking-wide">
             {s.title}
           </div>
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col">
             {s.rows.map((r) => (
-              <PlaceholderBox
-                key={r}
-                label={r}
-                figmaId="14:55"
-                className="h-9"
-                compact
+              <TreeNode
+                key={r.label}
+                label={r.label}
+                value={r.value}
+                interaction={r.selected ? "selected" : "default"}
               />
             ))}
           </div>
