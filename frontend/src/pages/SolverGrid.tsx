@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { Button } from "../components/Button";
 import { EVCell } from "../components/EVCell";
 import { TreeNode } from "../components/TreeNode";
+import { StatusEntry, type StatusTone } from "../components/StatusEntry";
 import { useSolverGrid } from "../api/useSolverGrid";
 import type { Harness, SolverGridResponse, StageRow } from "../api/types";
 
@@ -389,44 +390,45 @@ function RightPane() {
   );
 }
 
-function BottomBar() {
-  const left = [
-    { label: "vLLM", dot: "bg-status-info" },
-    { label: "Queue", dot: "bg-status-info" },
-    { label: "Sim", dot: "bg-status-info" },
+function BottomBar({ data }: { data: SolverGridResponse | null }) {
+  const winner = data?.harnesses.find((h) => h.winner);
+  const simsTotal = data
+    ? `${data.iterComplete.toLocaleString()} / ${data.iterTotal.toLocaleString()}`
+    : "—";
+  type Entry = { tone: StatusTone; label: string; detail: string };
+  const left: Entry[] = [
+    { tone: "info", label: "sims", detail: simsTotal },
+    { tone: "info", label: "Ollama llama-70b", detail: "GPU 78% · 24GB / 80GB" },
+    {
+      tone: "success",
+      label: winner ? `Top: Harness ${winner.id}` : "Top: —",
+      detail: winner ? `${winner.ev} · 94% pass` : "",
+    },
   ];
-  const right = [
-    { label: "workers", dot: "bg-status-success" },
-    { label: "p50/p95", dot: "bg-status-success" },
-    { label: "v0.3-alpha", dot: "bg-status-success" },
+  const right: Entry[] = [
+    { tone: "success", label: "workers 8/8", detail: "p50 1.4s · p95 5.2s" },
+    { tone: "success", label: "v0.3-alpha", detail: "14:22" },
   ];
-  const Entry = ({ label, dot }: { label: string; dot: string }) => (
-    <div
-      className="flex items-center gap-2 text-text-secondary text-xs font-mono"
-      data-stub="27:33"
-    >
-      <span className={clsx("h-2 w-2 rounded-full", dot)} />
-      <span className="text-text-primary">{label}</span>
-      <span>stub</span>
-    </div>
-  );
   return (
     <footer
       className={clsx(
+        // Canon px-5 (24 px) on the chrome bar — pane wrappers stay at px-4
+        // for harmony, but the bottom bar follows the canon Figma 125:96.
         "h-9 shrink-0 flex items-center justify-between",
-        "px-4",
-        "bg-bg-panel border-t border-border-hairline",
+        "px-5 gap-4",
+        // Canon bg = bg-elevated (not bg-panel) per Figma Chrome / Bottom bar.
+        "bg-bg-elevated border-t border-border-hairline",
       )}
       data-canon="bottombar-31:8"
     >
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-5 min-w-0">
         {left.map((e) => (
-          <Entry key={e.label} {...e} />
+          <StatusEntry key={e.label} {...e} />
         ))}
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-5 min-w-0">
         {right.map((e) => (
-          <Entry key={e.label} {...e} />
+          <StatusEntry key={e.label} {...e} />
         ))}
       </div>
     </footer>
@@ -478,7 +480,7 @@ export function SolverGrid() {
           <ErrorPane message={state.error} />
         )}
       </main>
-      <BottomBar />
+      <BottomBar data={state.status === "ready" ? state.data : null} />
     </div>
   );
 }
