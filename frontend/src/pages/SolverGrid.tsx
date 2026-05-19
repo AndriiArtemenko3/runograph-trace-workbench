@@ -104,31 +104,44 @@ function PlaceholderBox({
   figmaId,
   className,
   bodyExtra,
+  compact = false,
 }: {
   label: string;
   figmaId: string;
   className?: string;
   bodyExtra?: string;
+  /** Compact: single-line label only, no figma-marker line, truncates. */
+  compact?: boolean;
 }) {
   return (
     <div
       className={clsx(
         "rounded-md border border-dashed border-border-subtle",
-        // Now that color tokens use channel form, `/40` works — keep solid
-        // for stubs so they read distinctly against the panel.
         "bg-bg-elevated p-3",
         "text-text-secondary text-xs font-mono",
+        compact && "p-2 flex items-center min-w-0",
         className,
       )}
       data-stub={figmaId}
     >
-      <div className="text-text-secondary text-xs uppercase tracking-wide mb-1">
-        {label}
-      </div>
-      <div className="text-text-secondary">
-        stub · Figma {figmaId}
-        {bodyExtra ? ` · ${bodyExtra}` : null}
-      </div>
+      {compact ? (
+        <span
+          className="block truncate text-text-secondary text-xs uppercase tracking-wide"
+          title={label}
+        >
+          {label}
+        </span>
+      ) : (
+        <>
+          <div className="text-text-secondary text-xs uppercase tracking-wide mb-1">
+            {label}
+          </div>
+          <div className="text-text-secondary">
+            stub · Figma {figmaId}
+            {bodyExtra ? ` · ${bodyExtra}` : null}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -146,13 +159,52 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
   );
 }
 
+function ViewSwitcher() {
+  const views: { id: string; label: string; active?: boolean }[] = [
+    { id: "matrix", label: "Matrix", active: true },
+    { id: "heatmap", label: "Heat-map" },
+    { id: "stagetree", label: "Stage-tree" },
+    { id: "editor", label: "Editor" },
+  ];
+  return (
+    <div
+      className="flex items-center bg-bg-elevated border border-border-hairline rounded-md p-0.5"
+      role="tablist"
+      aria-label="Solver views"
+    >
+      {views.map((v) => (
+        <button
+          key={v.id}
+          type="button"
+          role="tab"
+          aria-selected={v.active ?? false}
+          className={clsx(
+            // h-8 = 32 px (Tailwind default). Project spacing token 7 = 48 px,
+            // so h-7 here would have ballooned the bar — use the default
+            // Tailwind scale for chrome-row heights.
+            "h-8 px-3 rounded-sm font-sans text-base font-medium",
+            "transition-colors",
+            "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-primary",
+            v.active
+              ? "bg-accent-primary text-bg-canvas"
+              : "text-text-secondary hover:text-text-primary",
+          )}
+          data-view={v.id}
+        >
+          {v.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TopBar() {
   return (
     <header
       className={clsx(
         // Canon h=56 (Figma 125:2).
         "h-14 shrink-0 flex items-center justify-between",
-        "px-4",
+        "px-4 gap-3",
         "bg-bg-panel border-b border-border-hairline",
       )}
       data-canon="topbar-31:4"
@@ -166,14 +218,15 @@ function TopBar() {
         </span>
       </div>
 
+      <ViewSwitcher />
+
       <div className="flex items-center gap-2">
         <PlaceholderBox
-          label="Weight profile"
+          label="Weight: balanced"
           figmaId="29:18"
-          className="h-8 w-40 p-1 flex items-center"
+          className="h-8 w-40"
+          compact
         />
-        <Button kind="secondary">Editor</Button>
-        <Button kind="secondary">Heat-map</Button>
         <Button kind="primary">Run Sim</Button>
       </div>
     </header>
@@ -206,7 +259,8 @@ function LeftPane() {
                 key={r}
                 label={r}
                 figmaId="14:55"
-                className="h-9 p-2 flex items-center"
+                className="h-9"
+                compact
               />
             ))}
           </div>
@@ -217,42 +271,57 @@ function LeftPane() {
 }
 
 function HarnessSummaryRow() {
+  const ci: Record<Harness["id"], string> = {
+    A: "±0.04",
+    B: "±0.03",
+    C: "±0.05",
+    D: "±0.06",
+  };
   return (
-    <div className="grid grid-cols-4 gap-3">
-      {MOCK_HARNESSES.map((h) => (
-        <div
-          key={h.id}
-          className={clsx(
-            "rounded-md p-3 flex flex-col gap-2",
-            "bg-bg-panel border border-border-hairline",
-            h.winner && "ring-2 ring-inset ring-status-warning",
-          )}
-          data-canon="harness-summary-31:9"
-          data-harness={h.id}
-        >
-          <div className="flex items-center justify-between">
-            <span className="font-sans text-lg font-medium text-text-primary">
-              {h.id}
-            </span>
-            {h.winner ? (
-              <span className="font-mono text-2xs uppercase tracking-wide text-status-warning">
-                winner
+    <section aria-label="Harness summary">
+      <h3 className="sr-only">Harness summary</h3>
+      <div className="grid grid-cols-4 gap-3">
+        {MOCK_HARNESSES.map((h) => (
+          <article
+            key={h.id}
+            className={clsx(
+              "rounded-md p-4 flex flex-col gap-2",
+              "bg-bg-panel border border-border-hairline",
+              h.winner && "ring-2 ring-inset ring-status-warning",
+            )}
+            data-canon="harness-summary-31:9"
+            data-harness={h.id}
+          >
+            <div className="flex items-center justify-between">
+              <span className="font-sans text-xl font-medium text-text-primary">
+                {h.id}
               </span>
-            ) : null}
-          </div>
-          <EVCell
-            label="composite"
-            value={h.ev}
-            sign={h.evSign}
-            magnitude={h.evMagnitude}
-            className="w-full"
-          />
-          <div className="text-text-secondary text-2xs font-mono">
-            95% CI ±0.0{h.id === "B" ? "3" : h.id === "A" ? "4" : "5"}
-          </div>
-        </div>
-      ))}
-    </div>
+              {h.winner ? (
+                <span
+                  className="font-mono text-2xs uppercase tracking-wide text-status-warning"
+                  aria-label="winner"
+                >
+                  ◆ winner
+                </span>
+              ) : null}
+            </div>
+            <div
+              className={clsx(
+                "font-mono text-2xl font-medium tabular-nums leading-tight",
+                h.evSign === "positive"
+                  ? "text-heat-productivity-500"
+                  : "text-heat-pollution-500",
+              )}
+            >
+              {h.ev}
+            </div>
+            <div className="text-text-secondary text-2xs font-mono">
+              95% CI {ci[h.id]}
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -279,7 +348,7 @@ function PerTaskMatrix() {
                 </th>
               ))}
               <th className="w-[80px] text-right text-text-secondary text-xs font-normal uppercase tracking-wide pr-0 pb-2">
-                Composite
+                EV
               </th>
             </tr>
           </thead>
@@ -391,11 +460,26 @@ function RightPane() {
 }
 
 function BottomBar() {
-  const cluster = [
-    { label: "vLLM", figmaId: "27:33" },
-    { label: "Queue", figmaId: "27:33" },
-    { label: "Sim", figmaId: "27:33" },
+  const left = [
+    { label: "vLLM", dot: "bg-status-info" },
+    { label: "Queue", dot: "bg-status-info" },
+    { label: "Sim", dot: "bg-status-info" },
   ];
+  const right = [
+    { label: "workers", dot: "bg-status-success" },
+    { label: "p50/p95", dot: "bg-status-success" },
+    { label: "v0.3-alpha", dot: "bg-status-success" },
+  ];
+  const Entry = ({ label, dot }: { label: string; dot: string }) => (
+    <div
+      className="flex items-center gap-2 text-text-secondary text-xs font-mono"
+      data-stub="27:33"
+    >
+      <span className={clsx("h-2 w-2 rounded-full", dot)} />
+      <span className="text-text-primary">{label}</span>
+      <span>stub</span>
+    </div>
+  );
   return (
     <footer
       className={clsx(
@@ -406,22 +490,14 @@ function BottomBar() {
       data-canon="bottombar-31:8"
     >
       <div className="flex items-center gap-4">
-        {cluster.map((e) => (
-          <div
-            key={e.label}
-            className="flex items-center gap-2 text-text-secondary text-xs font-mono"
-            data-stub={e.figmaId}
-          >
-            <span className="h-2 w-2 rounded-full bg-status-info" />
-            <span className="text-text-primary">{e.label}</span>
-            <span>stub · Figma {e.figmaId}</span>
-          </div>
+        {left.map((e) => (
+          <Entry key={e.label} {...e} />
         ))}
       </div>
-      <div className="flex items-center gap-2 text-text-secondary text-xs font-mono">
-        <span className="h-2 w-2 rounded-full bg-status-success" />
-        <span className="text-text-primary">v0.3-alpha</span>
-        <span>stub · Figma 27:33</span>
+      <div className="flex items-center gap-4">
+        {right.map((e) => (
+          <Entry key={e.label} {...e} />
+        ))}
       </div>
     </footer>
   );
