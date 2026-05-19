@@ -29,17 +29,6 @@ const config: Config = {
       xl: ["var(--rg-size-xl)", { lineHeight: "var(--rg-lh-loose)" }],
       "2xl": ["var(--rg-size-2xl)", { lineHeight: "var(--rg-lh-double)" }],
     },
-    spacing: {
-      0: "0",
-      1: "var(--rg-space-1)",
-      2: "var(--rg-space-2)",
-      3: "var(--rg-space-3)",
-      4: "var(--rg-space-4)",
-      5: "var(--rg-space-5)",
-      6: "var(--rg-space-6)",
-      7: "var(--rg-space-7)",
-      px: "1px",
-    },
     borderRadius: {
       none: "var(--rg-radius-none)",
       sm: "var(--rg-radius-sm)",
@@ -99,9 +88,19 @@ const config: Config = {
       },
     },
     extend: {
-      // numeric column alignment — used on tabular EV / metric cells
-      fontVariantNumeric: {
-        tabular: "tabular-nums",
+      // Design-system named spacing aliases — Tailwind's default scale (1=4px,
+      // 2=8px, 3=12px, 4=16px, 8=32px, 9=36px, 12=48px, 14=56px, 16=64px,
+      // 40=160px, 48=192px, …) stays available. Tokens 5/6/7 diverge from
+      // Tailwind defaults (24/32/48 vs 20/24/28) so the design-system wins
+      // on those keys via `extend`.
+      spacing: {
+        1: "var(--rg-space-1)",
+        2: "var(--rg-space-2)",
+        3: "var(--rg-space-3)",
+        4: "var(--rg-space-4)",
+        5: "var(--rg-space-5)",
+        6: "var(--rg-space-6)",
+        7: "var(--rg-space-7)",
       },
     },
   },

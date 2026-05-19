@@ -96,8 +96,12 @@ function PlaceholderBox({
     <div
       className={clsx(
         "rounded-md border border-dashed border-border-subtle",
-        "bg-bg-elevated/40 p-3",
-        "text-text-tertiary text-xs font-mono",
+        // Solid bg-elevated (the prior `/40` opacity modifier produced
+        // transparent fills because tokens are stored as hex, not channels —
+        // channel-form refactor lands in iter-2). The dashed border still
+        // marks the box as a stub.
+        "bg-bg-elevated p-3",
+        "text-text-secondary text-xs font-mono",
         className,
       )}
       data-stub={figmaId}
@@ -105,7 +109,7 @@ function PlaceholderBox({
       <div className="text-text-secondary text-xs uppercase tracking-wide mb-1">
         {label}
       </div>
-      <div className="text-text-tertiary">stub · Figma {figmaId}</div>
+      <div className="text-text-secondary">stub · Figma {figmaId}</div>
     </div>
   );
 }
@@ -114,7 +118,9 @@ function TopBar() {
   return (
     <header
       className={clsx(
-        "h-12 shrink-0 flex items-center justify-between",
+        // Canon h=56 (Figma 125:2). h-14 resolves now that the default
+        // Tailwind spacing scale is no longer overridden.
+        "h-14 shrink-0 flex items-center justify-between",
         "px-4 gap-3",
         "bg-bg-panel border-b border-border-hairline",
       )}
@@ -124,7 +130,7 @@ function TopBar() {
         <span className="font-sans text-md font-medium text-text-primary">
           RunoGraph
         </span>
-        <span className="text-text-tertiary font-mono text-xs">
+        <span className="text-text-secondary font-mono text-xs">
           / 03 Solver Grid
         </span>
       </div>
@@ -146,6 +152,7 @@ function TopBar() {
 function LeftPane() {
   return (
     <aside
+      aria-label="Harnesses and stages"
       className={clsx(
         "w-[320px] shrink-0",
         "bg-bg-panel border-r border-border-hairline",
@@ -193,9 +200,11 @@ function CenterPane() {
         <h2 className="font-sans text-lg font-medium text-text-primary">
           EV matrix
         </h2>
-        <p className="text-text-tertiary text-sm">
+        {/* text-secondary (#99A2AD) on bg-canvas = 6.95:1 — clears WCAG-AA
+            for normal text. Prior text-tertiary read 3.71:1, below 4.5:1. */}
+        <p className="text-text-secondary text-sm">
           4 harnesses · 5 SWE-bench-lite bug-fix tasks · weight profile{" "}
-          <span className="text-text-secondary">default</span>
+          <span className="text-text-primary">default</span>
         </p>
       </div>
 
@@ -203,18 +212,18 @@ function CenterPane() {
         <table className="border-separate border-spacing-y-2">
           <thead>
             <tr>
-              <th className="w-[180px] text-left text-text-tertiary text-xs font-normal uppercase tracking-wide pl-1 pb-2">
+              <th className="w-[180px] text-left text-text-secondary text-xs font-normal uppercase tracking-wide pl-1 pb-2">
                 Harness
               </th>
               {TASK_COLUMNS.map((t) => (
                 <th
                   key={t}
-                  className="w-[120px] text-center text-text-tertiary text-xs font-normal uppercase tracking-wide pb-2"
+                  className="w-[120px] text-center text-text-secondary text-xs font-normal uppercase tracking-wide pb-2"
                 >
                   {t}
                 </th>
               ))}
-              <th className="w-[100px] text-right text-text-tertiary text-xs font-normal uppercase tracking-wide pr-1 pb-2">
+              <th className="w-[100px] text-right text-text-secondary text-xs font-normal uppercase tracking-wide pr-1 pb-2">
                 Composite
               </th>
             </tr>
@@ -261,8 +270,12 @@ function CenterPane() {
 function RightPane() {
   return (
     <aside
+      aria-label="Recommendation and decomposition"
       className={clsx(
-        "w-[400px] shrink-0",
+        // Canon w=360 (Figma 31:8). Was 400, which pushed the center pane
+        // 40 px under canon (720 vs 760). With 360 the center pane sits at
+        // canon 760 width.
+        "w-[360px] shrink-0",
         "bg-bg-panel border-l border-border-hairline",
         "flex flex-col gap-3 p-4",
       )}
@@ -297,6 +310,7 @@ function BottomBar() {
   return (
     <footer
       className={clsx(
+        // Canon h=36 (Figma 125:96). h-9 resolves now that spacing extends.
         "h-9 shrink-0 flex items-center gap-4",
         "px-4",
         "bg-bg-panel border-t border-border-hairline",
@@ -306,11 +320,11 @@ function BottomBar() {
       {entries.map((e) => (
         <div
           key={e.label}
-          className="flex items-center gap-2 text-text-tertiary text-xs font-mono"
+          className="flex items-center gap-2 text-text-secondary text-xs font-mono"
           data-stub={e.figmaId}
         >
           <span className="h-2 w-2 rounded-full bg-status-info" />
-          <span className="text-text-secondary">{e.label}</span>
+          <span className="text-text-primary">{e.label}</span>
           <span>stub · Figma {e.figmaId}</span>
         </div>
       ))}
@@ -321,6 +335,8 @@ function BottomBar() {
 export function SolverGrid() {
   return (
     <div className="min-h-screen w-screen flex flex-col bg-bg-canvas text-text-primary">
+      {/* Visually-hidden page heading anchors the landmark/heading tree. */}
+      <h1 className="sr-only">RunoGraph Solver Grid</h1>
       <TopBar />
       <main className="flex-1 flex min-h-0">
         <LeftPane />

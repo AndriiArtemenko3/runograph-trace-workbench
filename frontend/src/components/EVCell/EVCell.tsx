@@ -74,22 +74,28 @@ export function EVCell({
   // Near-black text across ALL fills — 7-12:1 contrast on every heat variant.
   // (The earlier rule that switched to text/primary on mag 3-5 fails WCAG.)
   const textColor = "text-bg-canvas";
-  const ringClass = winner
-    ? "border-status-warning border-2"
-    : "border-transparent border";
+  // Winner ring uses `ring` (box-shadow) instead of border, so winner and
+  // non-winner cells share identical box dimensions — no 1 px layout jitter
+  // between rows. Focus ring is outline-based so it can coexist with the
+  // inset winner ring without conflict.
+  const ringClass = winner ? "ring-2 ring-inset ring-status-warning" : "";
 
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${label} · EV ${value}`}
+      // No aria-label — the inner label+value spans already render the
+      // visible text the accessible name needs (axe-core requires the
+      // visible text to be contained in the accessible name; letting
+      // the children carry it is the cleanest path).
       className={clsx(
         // canon: 120×48, radius/md, no stroke by default (winner adds 2px ring)
         "h-12 w-[120px] rounded-md transition-opacity",
         "flex flex-col items-center justify-center",
         // canon padding: padTRBL [6,8,6,8]
         "px-2 py-1.5 gap-0.5",
-        "hover:opacity-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent-primary",
+        "hover:opacity-95",
+        "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary",
         fill,
         ringClass,
         className,
