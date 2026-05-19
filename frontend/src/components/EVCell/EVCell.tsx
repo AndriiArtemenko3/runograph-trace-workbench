@@ -103,14 +103,14 @@ export function EVCell({
       data-sign={sign}
       data-magnitude={magnitude}
     >
-      {/* canon order: LABEL on top */}
-      <span className={clsx("font-sans text-[10px] leading-none font-normal", textColor)}>
+      {/* canon order: LABEL on top — 10px via the design-system `2xs` size */}
+      <span className={clsx("font-sans text-2xs leading-none font-normal", textColor)}>
         {label}
       </span>
       {/* canon order: NUMERIC below — JetBrains Mono Medium 14px (NOT 20px) */}
       <span
         className={clsx(
-          "font-mono leading-none rg-tabular",
+          "font-mono leading-none tabular-nums",
           // canon: 14px (between Tailwind text-sm 12 and text-md 14 — our scale's md is 14)
           "text-md font-medium",
           textColor,

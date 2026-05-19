@@ -3,18 +3,24 @@ import { Button } from "../components/Button";
 import { EVCell, type EVSign, type EVMagnitude } from "../components/EVCell";
 
 /**
- * Solver Grid page — Path B commit 1, the first page that renders real UI.
+ * Solver Grid page — Path B commit 1 + iter-2 reshape.
  *
  * Layout target: Figma file OvWgOsrPH5t3hL4l5bIazx page "03 Solver Grid v2"
- * (root node 31:3). Three-pane body — 320 left / center fluid / 400 right —
- * with a 48px top chrome and 36px bottom status bar.
+ * (root node 31:3). Three-pane body — 320 left / 760 center / 360 right —
+ * with a 56px top chrome and 36px bottom status bar.
  *
- * Components in this commit:
- *   - Real:   Button, EVCell (already ported, 12 + 10 variants in Storybook)
+ * Iter-2 reshape: the center pane now ships three stacked sections to match
+ * canon — Harness-summary row (4 cards) → Per-task EV detail matrix →
+ * Failure-class breakdown — instead of a single 4×5 EV-matrix block.
+ *
+ * Components in this page:
+ *   - Real:   Button, EVCell
  *   - Stub:   TreeNode (left pane rows),       Figma master 14:55  → commit 2
+ *             Harness summary cards (top),     Figma master 31:9   → composite (lands as part of commit 10 TopBar/composite work)
+ *             Failure-class breakdown,         Figma master 34:38  → later
  *             Recommendation pill (top right), Figma master 22:14  → commit 6
  *             EV decomposition table (mid),    Figma master 24:10  → commit 7
- *             Node-EV-cell (stage rows),       Figma master 19:88  → commit 5
+ *             Stage-decomposition table,       Figma master 35:58  → derived from commit 5 atoms
  *             Status-bar entry (bottom),       Figma master 27:33  → commit 4
  *             Weight-profile selector (top),   Figma master 29:18  → commit 9
  *
@@ -22,18 +28,22 @@ import { EVCell, type EVSign, type EVMagnitude } from "../components/EVCell";
  */
 
 type Harness = {
-  id: string;
+  id: "A" | "B" | "C" | "D";
   name: string;
   ev: string;
+  evSign: EVSign;
+  evMagnitude: EVMagnitude;
   winner?: boolean;
   cells: { label: string; value: string; sign: EVSign; magnitude: EVMagnitude }[];
 };
 
 const MOCK_HARNESSES: Harness[] = [
   {
-    id: "a",
+    id: "A",
     name: "single-sonnet",
     ev: "+0.20",
+    evSign: "positive",
+    evMagnitude: 2,
     cells: [
       { label: "T1", value: "+0.18", sign: "positive", magnitude: 2 },
       { label: "T2", value: "+0.24", sign: "positive", magnitude: 3 },
@@ -43,9 +53,11 @@ const MOCK_HARNESSES: Harness[] = [
     ],
   },
   {
-    id: "b",
-    name: "haiku-triage→sonnet-edit",
+    id: "B",
+    name: "haiku-triage → sonnet-edit",
     ev: "+0.52",
+    evSign: "positive",
+    evMagnitude: 5,
     winner: true,
     cells: [
       { label: "T1", value: "+0.41", sign: "positive", magnitude: 4 },
@@ -56,9 +68,11 @@ const MOCK_HARNESSES: Harness[] = [
     ],
   },
   {
-    id: "c",
+    id: "C",
     name: "haiku-only",
     ev: "−0.11",
+    evSign: "negative",
+    evMagnitude: 2,
     cells: [
       { label: "T1", value: "−0.04", sign: "negative", magnitude: 1 },
       { label: "T2", value: "+0.08", sign: "positive", magnitude: 1 },
@@ -68,9 +82,11 @@ const MOCK_HARNESSES: Harness[] = [
     ],
   },
   {
-    id: "d",
-    name: "sonnet+3-retry-repair",
+    id: "D",
+    name: "sonnet + 3-retry repair",
     ev: "+0.34",
+    evSign: "positive",
+    evMagnitude: 3,
     cells: [
       { label: "T1", value: "+0.29", sign: "positive", magnitude: 3 },
       { label: "T2", value: "+0.41", sign: "positive", magnitude: 4 },
@@ -87,19 +103,19 @@ function PlaceholderBox({
   label,
   figmaId,
   className,
+  bodyExtra,
 }: {
   label: string;
   figmaId: string;
   className?: string;
+  bodyExtra?: string;
 }) {
   return (
     <div
       className={clsx(
         "rounded-md border border-dashed border-border-subtle",
-        // Solid bg-elevated (the prior `/40` opacity modifier produced
-        // transparent fills because tokens are stored as hex, not channels —
-        // channel-form refactor lands in iter-2). The dashed border still
-        // marks the box as a stub.
+        // Now that color tokens use channel form, `/40` works — keep solid
+        // for stubs so they read distinctly against the panel.
         "bg-bg-elevated p-3",
         "text-text-secondary text-xs font-mono",
         className,
@@ -109,7 +125,23 @@ function PlaceholderBox({
       <div className="text-text-secondary text-xs uppercase tracking-wide mb-1">
         {label}
       </div>
-      <div className="text-text-secondary">stub · Figma {figmaId}</div>
+      <div className="text-text-secondary">
+        stub · Figma {figmaId}
+        {bodyExtra ? ` · ${bodyExtra}` : null}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="pb-2">
+      <h3 className="font-sans text-sm font-medium text-text-primary uppercase tracking-wide">
+        {title}
+      </h3>
+      {subtitle ? (
+        <p className="text-text-secondary text-xs mt-1">{subtitle}</p>
+      ) : null}
     </div>
   );
 }
@@ -118,15 +150,14 @@ function TopBar() {
   return (
     <header
       className={clsx(
-        // Canon h=56 (Figma 125:2). h-14 resolves now that the default
-        // Tailwind spacing scale is no longer overridden.
+        // Canon h=56 (Figma 125:2).
         "h-14 shrink-0 flex items-center justify-between",
-        "px-4 gap-3",
+        "px-4",
         "bg-bg-panel border-b border-border-hairline",
       )}
       data-canon="topbar-31:4"
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         <span className="font-sans text-md font-medium text-text-primary">
           RunoGraph
         </span>
@@ -150,6 +181,10 @@ function TopBar() {
 }
 
 function LeftPane() {
+  const sections: { title: string; rows: string[] }[] = [
+    { title: "Harnesses", rows: MOCK_HARNESSES.map((h) => h.name) },
+    { title: "Stages", rows: ["plan", "search", "edit", "test", "review"] },
+  ];
   return (
     <aside
       aria-label="Harnesses and stages"
@@ -160,55 +195,75 @@ function LeftPane() {
       )}
       data-canon="leftpane-31:5"
     >
-      <div className="px-4 pt-4 pb-2 text-text-secondary text-xs uppercase tracking-wide">
-        Harnesses
-      </div>
-      <div className="px-3 flex flex-col gap-1">
-        {MOCK_HARNESSES.map((h) => (
-          <PlaceholderBox
-            key={h.id}
-            label={h.name}
-            figmaId="14:55"
-            className="h-9 p-2 flex items-center"
-          />
-        ))}
-      </div>
-      <div className="px-4 pt-5 pb-2 text-text-secondary text-xs uppercase tracking-wide">
-        Stages
-      </div>
-      <div className="px-3 flex flex-col gap-1">
-        {["plan", "search", "edit", "test", "review"].map((s) => (
-          <PlaceholderBox
-            key={s}
-            label={s}
-            figmaId="14:55"
-            className="h-9 p-2 flex items-center"
-          />
-        ))}
-      </div>
+      {sections.map((s, idx) => (
+        <div key={s.title} className={clsx("px-4", idx === 0 ? "pt-4" : "pt-4")}>
+          <div className="pb-2 text-text-secondary text-xs uppercase tracking-wide">
+            {s.title}
+          </div>
+          <div className="flex flex-col gap-1">
+            {s.rows.map((r) => (
+              <PlaceholderBox
+                key={r}
+                label={r}
+                figmaId="14:55"
+                className="h-9 p-2 flex items-center"
+              />
+            ))}
+          </div>
+        </div>
+      ))}
     </aside>
   );
 }
 
-function CenterPane() {
+function HarnessSummaryRow() {
   return (
-    <section
-      className="flex-1 min-w-0 bg-bg-canvas flex flex-col"
-      data-canon="centerpane-31:6"
-    >
-      <div className="px-5 pt-5 pb-3">
-        <h2 className="font-sans text-lg font-medium text-text-primary">
-          EV matrix
-        </h2>
-        {/* text-secondary (#99A2AD) on bg-canvas = 6.95:1 — clears WCAG-AA
-            for normal text. Prior text-tertiary read 3.71:1, below 4.5:1. */}
-        <p className="text-text-secondary text-sm">
-          4 harnesses · 5 SWE-bench-lite bug-fix tasks · weight profile{" "}
-          <span className="text-text-primary">default</span>
-        </p>
-      </div>
+    <div className="grid grid-cols-4 gap-3">
+      {MOCK_HARNESSES.map((h) => (
+        <div
+          key={h.id}
+          className={clsx(
+            "rounded-md p-3 flex flex-col gap-2",
+            "bg-bg-panel border border-border-hairline",
+            h.winner && "ring-2 ring-inset ring-status-warning",
+          )}
+          data-canon="harness-summary-31:9"
+          data-harness={h.id}
+        >
+          <div className="flex items-center justify-between">
+            <span className="font-sans text-lg font-medium text-text-primary">
+              {h.id}
+            </span>
+            {h.winner ? (
+              <span className="font-mono text-2xs uppercase tracking-wide text-status-warning">
+                winner
+              </span>
+            ) : null}
+          </div>
+          <EVCell
+            label="composite"
+            value={h.ev}
+            sign={h.evSign}
+            magnitude={h.evMagnitude}
+            className="w-full"
+          />
+          <div className="text-text-secondary text-2xs font-mono">
+            95% CI ±0.0{h.id === "B" ? "3" : h.id === "A" ? "4" : "5"}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-      <div className="px-5 pb-5 overflow-auto">
+function PerTaskMatrix() {
+  return (
+    <div>
+      <SectionHeader
+        title="Per-task EV detail"
+        subtitle="5 SWE-bench-lite bug-fix tasks · weight profile default"
+      />
+      <div className="overflow-auto">
         <table className="border-separate border-spacing-y-2">
           <thead>
             <tr>
@@ -223,7 +278,7 @@ function CenterPane() {
                   {t}
                 </th>
               ))}
-              <th className="w-[100px] text-right text-text-secondary text-xs font-normal uppercase tracking-wide pr-1 pb-2">
+              <th className="w-[80px] text-right text-text-secondary text-xs font-normal uppercase tracking-wide pr-0 pb-2">
                 Composite
               </th>
             </tr>
@@ -252,7 +307,7 @@ function CenterPane() {
                 ))}
                 <td
                   className={clsx(
-                    "pl-3 pr-1 text-right font-mono text-md tabular-nums",
+                    "pl-3 pr-0 text-right font-mono text-md tabular-nums",
                     h.winner ? "text-text-primary font-medium" : "text-text-secondary",
                   )}
                 >
@@ -263,6 +318,36 @@ function CenterPane() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function CenterPane() {
+  return (
+    <section
+      className="flex-1 min-w-0 bg-bg-canvas flex flex-col"
+      data-canon="centerpane-31:6"
+    >
+      <div className="px-4 pt-4 pb-3">
+        <h2 className="font-sans text-lg font-medium text-text-primary">
+          Multi-harness solver · bug-fix task class
+        </h2>
+        <p className="text-text-secondary text-sm">
+          4 harnesses × 1,200 sims each · 95% CI ·{" "}
+          <span className="text-text-primary">iter 7,412 of 12,000</span>
+        </p>
+      </div>
+
+      <div className="px-4 pb-4 flex flex-col gap-4 overflow-auto">
+        <HarnessSummaryRow />
+        <PerTaskMatrix />
+        <PlaceholderBox
+          label="Failure-class breakdown"
+          figmaId="34:38"
+          className="h-44 p-3"
+          bodyExtra="orphan-loop / skip-load-bearing / context-overflow / citation-no-trav / under-connected × A B C D"
+        />
+      </div>
     </section>
   );
 }
@@ -272,62 +357,72 @@ function RightPane() {
     <aside
       aria-label="Recommendation and decomposition"
       className={clsx(
-        // Canon w=360 (Figma 31:8). Was 400, which pushed the center pane
-        // 40 px under canon (720 vs 760). With 360 the center pane sits at
-        // canon 760 width.
         "w-[360px] shrink-0",
         "bg-bg-panel border-l border-border-hairline",
         "flex flex-col gap-3 p-4",
       )}
       data-canon="rightpane-31:7"
     >
+      {/* Canon proportions: Recommendation ≈ 197, EV decomp ≈ 609 (dominant),
+          Stage decomp small. h-32 + flex-1 + h-16 approximates 0.22 / 0.67 /
+          0.11 of the pane height — matches canon within rounding. */}
       <PlaceholderBox
         label="Recommendation"
         figmaId="22:14"
-        className="h-16 p-3"
+        className="h-32 p-3"
       />
       <PlaceholderBox
         label="EV decomposition"
         figmaId="24:10"
-        className="flex-1 p-3"
+        className="flex-1 min-h-[240px] p-3"
       />
       <PlaceholderBox
         label="Stage decomposition"
-        figmaId="19:88"
-        className="h-48 p-3"
+        figmaId="35:58"
+        className="h-16 p-3"
       />
+      <div className="flex gap-2 mt-auto">
+        <Button kind="primary">Promote B</Button>
+        <Button kind="secondary">Compare B vs A</Button>
+        <Button kind="secondary">Export</Button>
+      </div>
     </aside>
   );
 }
 
 function BottomBar() {
-  const entries = [
+  const cluster = [
     { label: "vLLM", figmaId: "27:33" },
     { label: "Queue", figmaId: "27:33" },
     { label: "Sim", figmaId: "27:33" },
-    { label: "DB", figmaId: "27:33" },
   ];
   return (
     <footer
       className={clsx(
-        // Canon h=36 (Figma 125:96). h-9 resolves now that spacing extends.
-        "h-9 shrink-0 flex items-center gap-4",
+        "h-9 shrink-0 flex items-center justify-between",
         "px-4",
         "bg-bg-panel border-t border-border-hairline",
       )}
       data-canon="bottombar-31:8"
     >
-      {entries.map((e) => (
-        <div
-          key={e.label}
-          className="flex items-center gap-2 text-text-secondary text-xs font-mono"
-          data-stub={e.figmaId}
-        >
-          <span className="h-2 w-2 rounded-full bg-status-info" />
-          <span className="text-text-primary">{e.label}</span>
-          <span>stub · Figma {e.figmaId}</span>
-        </div>
-      ))}
+      <div className="flex items-center gap-4">
+        {cluster.map((e) => (
+          <div
+            key={e.label}
+            className="flex items-center gap-2 text-text-secondary text-xs font-mono"
+            data-stub={e.figmaId}
+          >
+            <span className="h-2 w-2 rounded-full bg-status-info" />
+            <span className="text-text-primary">{e.label}</span>
+            <span>stub · Figma {e.figmaId}</span>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 text-text-secondary text-xs font-mono">
+        <span className="h-2 w-2 rounded-full bg-status-success" />
+        <span className="text-text-primary">v0.3-alpha</span>
+        <span>stub · Figma 27:33</span>
+      </div>
     </footer>
   );
 }

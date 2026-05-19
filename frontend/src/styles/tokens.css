@@ -8,51 +8,56 @@
  *
  * Single source of truth — components MUST consume via var(--rg-*) or via the
  * Tailwind aliases (bg-bg-canvas, text-text-primary, etc.). No hex literals.
+ *
+ * Color channel form: every color is declared as space-separated `R G B`
+ * integers (NOT `#hex`, NOT `rgb()`) so Tailwind can synthesise alpha via
+ * `rgb(var(--rg-X) / <alpha-value>)` — this is what lets `bg-bg-elevated/40`,
+ * `text-text-primary/80`, etc. work across the whole token surface.
  */
 
 :root {
-  /* ───── surfaces ───── */
-  --rg-bg-canvas: #14171c;
-  --rg-bg-panel: #1a1e24;
-  --rg-bg-elevated: #1f242b;
-  --rg-bg-sunken: #0f1216;
+  /* ───── surfaces (channels for /opacity support) ───── */
+  --rg-bg-canvas: 20 23 28;       /* #14171c */
+  --rg-bg-panel: 26 30 36;        /* #1a1e24 */
+  --rg-bg-elevated: 31 36 43;     /* #1f242b */
+  --rg-bg-sunken: 15 18 22;       /* #0f1216 */
 
   /* ───── text ───── */
-  --rg-text-primary: #dfe3e8;
-  --rg-text-secondary: #99a2ad;
-  --rg-text-tertiary: #6b7280;
-  --rg-text-disabled: #4a5159;
-  --rg-text-accent: #4c9aff;
+  --rg-text-primary: 223 227 232;   /* #dfe3e8 */
+  --rg-text-secondary: 153 162 173; /* #99a2ad */
+  --rg-text-tertiary: 107 114 128;  /* #6b7280 */
+  --rg-text-disabled: 74 81 89;     /* #4a5159 */
+  --rg-text-accent: 76 154 255;     /* #4c9aff */
 
   /* ───── borders ───── */
-  --rg-border-hairline: #2a2f37;
-  --rg-border-subtle: #353b44;
-  --rg-border-strong: #4a5159;
+  --rg-border-hairline: 42 47 55;   /* #2a2f37 */
+  --rg-border-subtle: 53 59 68;     /* #353b44 */
+  --rg-border-strong: 74 81 89;     /* #4a5159 */
 
   /* ───── accent ───── */
-  --rg-accent-primary: #4c9aff;
-  --rg-accent-hover: #66adff;
-  --rg-accent-pressed: #3a7fdd;
+  --rg-accent-primary: 76 154 255;  /* #4c9aff */
+  --rg-accent-hover: 102 173 255;   /* #66adff */
+  --rg-accent-pressed: 58 127 221;  /* #3a7fdd */
 
   /* ───── heat / productivity (light → dark green) ───── */
-  --rg-heat-productivity-100: #b8ebd0;
-  --rg-heat-productivity-200: #7cddb7;
-  --rg-heat-productivity-300: #59c89f;
-  --rg-heat-productivity-400: #46c091;
-  --rg-heat-productivity-500: #36b37e;
+  --rg-heat-productivity-100: 184 235 208; /* #b8ebd0 */
+  --rg-heat-productivity-200: 124 221 183; /* #7cddb7 */
+  --rg-heat-productivity-300: 89 200 159;  /* #59c89f */
+  --rg-heat-productivity-400: 70 192 145;  /* #46c091 */
+  --rg-heat-productivity-500: 54 179 126;  /* #36b37e */
 
   /* ───── heat / pollution (light → dark red) ───── */
-  --rg-heat-pollution-100: #ffcccc;
-  --rg-heat-pollution-200: #ffadad;
-  --rg-heat-pollution-300: #ff8989;
-  --rg-heat-pollution-400: #ff7878;
-  --rg-heat-pollution-500: #ff6b6b;
+  --rg-heat-pollution-100: 255 204 204; /* #ffcccc */
+  --rg-heat-pollution-200: 255 173 173; /* #ffadad */
+  --rg-heat-pollution-300: 255 137 137; /* #ff8989 */
+  --rg-heat-pollution-400: 255 120 120; /* #ff7878 */
+  --rg-heat-pollution-500: 255 107 107; /* #ff6b6b */
 
   /* ───── status ───── */
-  --rg-status-success: #36b37e;
-  --rg-status-warning: #ffb454;
-  --rg-status-danger: #ff6b6b;
-  --rg-status-info: #4c9aff;
+  --rg-status-success: 54 179 126;  /* #36b37e */
+  --rg-status-warning: 255 180 84;  /* #ffb454 */
+  --rg-status-danger: 255 107 107;  /* #ff6b6b */
+  --rg-status-info: 76 154 255;     /* #4c9aff */
 
   /* ───── typography families ───── */
   --rg-font-sans: "Inter", ui-sans-serif, system-ui, -apple-system,
@@ -61,6 +66,7 @@
     monospace;
 
   /* ───── type sizes (px) ───── */
+  --rg-size-2xs: 10px;
   --rg-size-xs: 11px;
   --rg-size-sm: 12px;
   --rg-size-base: 13px;

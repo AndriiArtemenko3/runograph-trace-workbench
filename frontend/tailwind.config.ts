@@ -7,20 +7,26 @@ import type { Config } from "tailwindcss";
  * alias here. Components consume tokens via these aliases (bg-bg-canvas,
  * text-text-primary, heat-productivity-500, etc.) — never via hex literals.
  *
+ * Colors are bound as `rgb(var(--rg-X) / <alpha-value>)` so Tailwind's opacity
+ * modifiers (`bg-bg-elevated/40`, `text-text-primary/80`, etc.) synthesise
+ * real alpha against the channel-form variables declared in tokens.css.
+ * Solid utilities keep working because `<alpha-value>` defaults to `1`.
+ *
  * The shape mirrors the Figma variable groups (bg/text/border/accent/heat/
  * status/font/size/lineHeight/space/radius) so the design system maps 1:1.
  */
+const rgb = (token: string) => `rgb(var(${token}) / <alpha-value>)`;
+
 const config: Config = {
   content: ["./index.html", "./src/**/*.{ts,tsx}", "./.storybook/**/*.{ts,tsx}"],
   darkMode: "class",
   theme: {
-    // override defaults — we want the design-system tokens to be the ONLY
-    // values used in classnames.
     fontFamily: {
       sans: "var(--rg-font-sans)",
       mono: "var(--rg-font-mono)",
     },
     fontSize: {
+      "2xs": ["var(--rg-size-2xs)", { lineHeight: "var(--rg-lh-tight)" }],
       xs: ["var(--rg-size-xs)", { lineHeight: "var(--rg-lh-tight)" }],
       sm: ["var(--rg-size-sm)", { lineHeight: "var(--rg-lh-snug)" }],
       base: ["var(--rg-size-base)", { lineHeight: "var(--rg-lh-normal)" }],
@@ -42,49 +48,49 @@ const config: Config = {
       transparent: "transparent",
       current: "currentColor",
       bg: {
-        canvas: "var(--rg-bg-canvas)",
-        panel: "var(--rg-bg-panel)",
-        elevated: "var(--rg-bg-elevated)",
-        sunken: "var(--rg-bg-sunken)",
+        canvas: rgb("--rg-bg-canvas"),
+        panel: rgb("--rg-bg-panel"),
+        elevated: rgb("--rg-bg-elevated"),
+        sunken: rgb("--rg-bg-sunken"),
       },
       text: {
-        primary: "var(--rg-text-primary)",
-        secondary: "var(--rg-text-secondary)",
-        tertiary: "var(--rg-text-tertiary)",
-        disabled: "var(--rg-text-disabled)",
-        accent: "var(--rg-text-accent)",
+        primary: rgb("--rg-text-primary"),
+        secondary: rgb("--rg-text-secondary"),
+        tertiary: rgb("--rg-text-tertiary"),
+        disabled: rgb("--rg-text-disabled"),
+        accent: rgb("--rg-text-accent"),
       },
       border: {
-        hairline: "var(--rg-border-hairline)",
-        subtle: "var(--rg-border-subtle)",
-        strong: "var(--rg-border-strong)",
+        hairline: rgb("--rg-border-hairline"),
+        subtle: rgb("--rg-border-subtle"),
+        strong: rgb("--rg-border-strong"),
       },
       accent: {
-        primary: "var(--rg-accent-primary)",
-        hover: "var(--rg-accent-hover)",
-        pressed: "var(--rg-accent-pressed)",
+        primary: rgb("--rg-accent-primary"),
+        hover: rgb("--rg-accent-hover"),
+        pressed: rgb("--rg-accent-pressed"),
       },
       heat: {
         productivity: {
-          100: "var(--rg-heat-productivity-100)",
-          200: "var(--rg-heat-productivity-200)",
-          300: "var(--rg-heat-productivity-300)",
-          400: "var(--rg-heat-productivity-400)",
-          500: "var(--rg-heat-productivity-500)",
+          100: rgb("--rg-heat-productivity-100"),
+          200: rgb("--rg-heat-productivity-200"),
+          300: rgb("--rg-heat-productivity-300"),
+          400: rgb("--rg-heat-productivity-400"),
+          500: rgb("--rg-heat-productivity-500"),
         },
         pollution: {
-          100: "var(--rg-heat-pollution-100)",
-          200: "var(--rg-heat-pollution-200)",
-          300: "var(--rg-heat-pollution-300)",
-          400: "var(--rg-heat-pollution-400)",
-          500: "var(--rg-heat-pollution-500)",
+          100: rgb("--rg-heat-pollution-100"),
+          200: rgb("--rg-heat-pollution-200"),
+          300: rgb("--rg-heat-pollution-300"),
+          400: rgb("--rg-heat-pollution-400"),
+          500: rgb("--rg-heat-pollution-500"),
         },
       },
       status: {
-        success: "var(--rg-status-success)",
-        warning: "var(--rg-status-warning)",
-        danger: "var(--rg-status-danger)",
-        info: "var(--rg-status-info)",
+        success: rgb("--rg-status-success"),
+        warning: rgb("--rg-status-warning"),
+        danger: rgb("--rg-status-danger"),
+        info: rgb("--rg-status-info"),
       },
     },
     extend: {

@@ -10,13 +10,9 @@ body,
 }
 
 body {
-  background-color: var(--rg-bg-canvas);
-  color: var(--rg-text-primary);
+  /* Channel-form tokens require an rgb() wrapper at the consumer. */
+  background-color: rgb(var(--rg-bg-canvas));
+  color: rgb(var(--rg-text-primary));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-}
-
-/* tabular-nums for any numeric column */
-.rg-tabular {
-  font-variant-numeric: tabular-nums;
 }
