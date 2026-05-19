@@ -35,6 +35,20 @@ export interface StageRow {
   selected: boolean;
 }
 
+export interface StageDecompCell {
+  value: string;
+  sign: EVSign;
+  magnitude: EVMagnitude;
+}
+
+export interface StageDecompRow {
+  stage: string;
+  a: StageDecompCell;
+  b: StageDecompCell;
+  c: StageDecompCell;
+  d: StageDecompCell;
+}
+
 export interface FailureClassRow {
   failureClass: string;
   a: string;
@@ -51,5 +65,6 @@ export interface SolverGridResponse {
   weightProfile: string;
   harnesses: Harness[];
   stages: StageRow[];
+  stageDecomposition: StageDecompRow[];
   failureClasses: FailureClassRow[];
 }

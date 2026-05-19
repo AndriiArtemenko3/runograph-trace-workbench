@@ -1,10 +1,17 @@
+import { Fragment } from "react";
 import clsx from "clsx";
 import { Button } from "../components/Button";
 import { EVCell } from "../components/EVCell";
 import { TreeNode } from "../components/TreeNode";
 import { StatusEntry, type StatusTone } from "../components/StatusEntry";
+import { NodeEVCell } from "../components/NodeEVCell";
 import { useSolverGrid } from "../api/useSolverGrid";
-import type { Harness, SolverGridResponse, StageRow } from "../api/types";
+import type {
+  Harness,
+  SolverGridResponse,
+  StageDecompRow,
+  StageRow,
+} from "../api/types";
 
 /**
  * Solver Grid page — Path B commit 1 + iter-2 reshape + commit-3 fetch wiring.
@@ -355,7 +362,51 @@ function CenterPane({ data }: { data: SolverGridResponse }) {
   );
 }
 
-function RightPane() {
+function StageDecompositionTable({ rows }: { rows: StageDecompRow[] }) {
+  const harnessCols: Array<keyof Omit<StageDecompRow, "stage">> = ["a", "b", "c", "d"];
+  return (
+    <section
+      aria-label="Stage decomposition"
+      className="rounded-md bg-bg-elevated border border-border-hairline p-3"
+      data-canon="stagedecomp-35:58"
+    >
+      <h3 className="text-text-secondary text-xs font-mono uppercase tracking-wide pb-2">
+        Stage decomposition · EV by pipeline stage
+      </h3>
+      <div className="grid grid-cols-[1fr_repeat(4,64px)] gap-x-2 gap-y-1 items-center">
+        <span className="text-text-tertiary text-2xs font-mono uppercase tracking-wide">
+          stage
+        </span>
+        {(["A", "B", "C", "D"] as const).map((h) => (
+          <span
+            key={h}
+            className="text-text-tertiary text-2xs font-mono text-center uppercase"
+          >
+            {h}
+          </span>
+        ))}
+        {rows.map((r) => (
+          <Fragment key={r.stage}>
+            <span className="text-text-primary text-sm font-sans">{r.stage}</span>
+            {harnessCols.map((c) => {
+              const cell = r[c];
+              return (
+                <NodeEVCell
+                  key={`${r.stage}-${c}`}
+                  value={cell.value}
+                  sign={cell.sign}
+                  magnitude={cell.magnitude}
+                />
+              );
+            })}
+          </Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RightPane({ stageDecomposition }: { stageDecomposition: StageDecompRow[] }) {
   return (
     <aside
       aria-label="Recommendation and decomposition"
@@ -374,13 +425,9 @@ function RightPane() {
       <PlaceholderBox
         label="EV decomposition"
         figmaId="24:10"
-        className="flex-1 min-h-[240px] p-3"
+        className="flex-1 min-h-[200px] p-3"
       />
-      <PlaceholderBox
-        label="Stage decomposition"
-        figmaId="35:58"
-        className="h-16 p-3"
-      />
+      <StageDecompositionTable rows={stageDecomposition} />
       <div className="flex gap-2 mt-auto">
         <Button kind="primary">Promote B</Button>
         <Button kind="secondary">Compare B vs A</Button>
@@ -472,7 +519,7 @@ export function SolverGrid() {
           <>
             <LeftPane harnesses={state.data.harnesses} stages={state.data.stages} />
             <CenterPane data={state.data} />
-            <RightPane />
+            <RightPane stageDecomposition={state.data.stageDecomposition} />
           </>
         ) : state.status === "loading" ? (
           <LoadingPane />

@@ -48,6 +48,20 @@ class StageRow(BaseModel):
     selected: bool = False
 
 
+class StageDecompCell(BaseModel):
+    value: str
+    sign: EVSign
+    magnitude: EVMagnitude
+
+
+class StageDecompRow(BaseModel):
+    stage: str
+    a: StageDecompCell
+    b: StageDecompCell
+    c: StageDecompCell
+    d: StageDecompCell
+
+
 class FailureClassRow(BaseModel):
     failure_class: str = Field(..., alias="failureClass")
     a: str = "0%"
@@ -66,6 +80,7 @@ class SolverGridResponse(BaseModel):
     weight_profile: str = Field(..., alias="weightProfile")
     harnesses: list[Harness]
     stages: list[StageRow]
+    stage_decomposition: list[StageDecompRow] = Field(..., alias="stageDecomposition")
     failure_classes: list[FailureClassRow] = Field(..., alias="failureClasses")
 
     model_config = {"populate_by_name": True}
@@ -148,6 +163,43 @@ def _mock_response() -> SolverGridResponse:
             StageRow(stage="edit", ev="+0.31", selected=True),
             StageRow(stage="test", ev="+0.06"),
             StageRow(stage="review", ev="+0.04"),
+        ],
+        stage_decomposition=[
+            StageDecompRow(
+                stage="plan",
+                a=StageDecompCell(value="+0.04", sign="positive", magnitude=1),
+                b=StageDecompCell(value="+0.04", sign="positive", magnitude=1),
+                c=StageDecompCell(value="−0.02", sign="negative", magnitude=1),
+                d=StageDecompCell(value="−0.05", sign="negative", magnitude=2),
+            ),
+            StageDecompRow(
+                stage="search",
+                a=StageDecompCell(value="+0.08", sign="positive", magnitude=1),
+                b=StageDecompCell(value="+0.07", sign="positive", magnitude=1),
+                c=StageDecompCell(value="+0.01", sign="positive", magnitude=1),
+                d=StageDecompCell(value="−0.09", sign="negative", magnitude=2),
+            ),
+            StageDecompRow(
+                stage="edit",
+                a=StageDecompCell(value="+0.05", sign="positive", magnitude=1),
+                b=StageDecompCell(value="+0.31", sign="positive", magnitude=5),
+                c=StageDecompCell(value="−0.01", sign="negative", magnitude=1),
+                d=StageDecompCell(value="−0.07", sign="negative", magnitude=2),
+            ),
+            StageDecompRow(
+                stage="test",
+                a=StageDecompCell(value="+0.02", sign="positive", magnitude=1),
+                b=StageDecompCell(value="+0.06", sign="positive", magnitude=1),
+                c=StageDecompCell(value="+0.01", sign="positive", magnitude=1),
+                d=StageDecompCell(value="−0.06", sign="negative", magnitude=2),
+            ),
+            StageDecompRow(
+                stage="repair",
+                a=StageDecompCell(value="+0.01", sign="positive", magnitude=1),
+                b=StageDecompCell(value="+0.04", sign="positive", magnitude=1),
+                c=StageDecompCell(value="+0.00", sign="positive", magnitude=1),
+                d=StageDecompCell(value="−0.03", sign="negative", magnitude=1),
+            ),
         ],
         failureClasses=[
             FailureClassRow(failureClass="orphan-loop", a="18%", b="6%", c="22%", d="19%"),
