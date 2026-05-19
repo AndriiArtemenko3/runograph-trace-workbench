@@ -49,6 +49,24 @@ export interface StageDecompRow {
   d: StageDecompCell;
 }
 
+export interface RecommendationBullet {
+  text: string;
+  tone: "neutral" | "accent";
+}
+
+export interface RecommendationPillContent {
+  kind: "top-pick" | "runner-up";
+  harnessId: string;
+  ev: string;
+  descriptor: string;
+  bullets: RecommendationBullet[];
+}
+
+export interface Recommendation {
+  topPick: RecommendationPillContent;
+  runnerUp: RecommendationPillContent;
+}
+
 export interface FailureClassRow {
   failureClass: string;
   a: string;
@@ -67,4 +85,5 @@ export interface SolverGridResponse {
   stages: StageRow[];
   stageDecomposition: StageDecompRow[];
   failureClasses: FailureClassRow[];
+  recommendation: Recommendation;
 }

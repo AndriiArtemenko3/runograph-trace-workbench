@@ -48,6 +48,28 @@ class StageRow(BaseModel):
     selected: bool = False
 
 
+class RecommendationBullet(BaseModel):
+    text: str
+    tone: Literal["neutral", "accent"] = "neutral"
+
+
+class RecommendationPillContent(BaseModel):
+    kind: Literal["top-pick", "runner-up"]
+    harness_id: str = Field(..., alias="harnessId")
+    ev: str
+    descriptor: str
+    bullets: list[RecommendationBullet]
+
+    model_config = {"populate_by_name": True}
+
+
+class Recommendation(BaseModel):
+    top_pick: RecommendationPillContent = Field(..., alias="topPick")
+    runner_up: RecommendationPillContent = Field(..., alias="runnerUp")
+
+    model_config = {"populate_by_name": True}
+
+
 class StageDecompCell(BaseModel):
     value: str
     sign: EVSign
@@ -82,6 +104,7 @@ class SolverGridResponse(BaseModel):
     stages: list[StageRow]
     stage_decomposition: list[StageDecompRow] = Field(..., alias="stageDecomposition")
     failure_classes: list[FailureClassRow] = Field(..., alias="failureClasses")
+    recommendation: Recommendation
 
     model_config = {"populate_by_name": True}
 
@@ -208,6 +231,32 @@ def _mock_response() -> SolverGridResponse:
             FailureClassRow(failureClass="citation-no-trav", a="9%", b="5%", c="13%", d="16%"),
             FailureClassRow(failureClass="under-connected", a="8%", b="4%", c="17%", d="11%"),
         ],
+        recommendation=Recommendation(
+            topPick=RecommendationPillContent(
+                kind="top-pick",
+                harnessId="Harness B",
+                ev="+0.52",
+                descriptor="claude-haiku triage → sonnet edit → claude-judge / 3-retry",
+                bullets=[
+                    RecommendationBullet(text="47 of 50 bug-fix tasks passed (94%)"),
+                    RecommendationBullet(text="−42% token spend vs frontier-only"),
+                    RecommendationBullet(
+                        text="discovery: triage-then-escalate beats single-model on multi-file edits",
+                        tone="accent",
+                    ),
+                ],
+            ),
+            runnerUp=RecommendationPillContent(
+                kind="runner-up",
+                harnessId="Harness A",
+                ev="+0.20",
+                descriptor="claude-sonnet / dense retrieval / no triage",
+                bullets=[
+                    RecommendationBullet(text="36 of 50 bug-fix tasks passed (72%)"),
+                    RecommendationBullet(text="lowest p95 latency in the set (3.4 s)"),
+                ],
+            ),
+        ),
     )
 
 
