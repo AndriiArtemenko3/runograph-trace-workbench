@@ -48,6 +48,22 @@ class StageRow(BaseModel):
     selected: bool = False
 
 
+class EVDecompositionRow(BaseModel):
+    signal: str
+    weight: str
+    contribution: str
+    tone: Literal["success", "danger"]
+
+
+class EVDecomposition(BaseModel):
+    harness: str
+    composite: str
+    composite_tone: Literal["success", "danger"] = Field("success", alias="compositeTone")
+    rows: list[EVDecompositionRow]
+
+    model_config = {"populate_by_name": True}
+
+
 class RecommendationBullet(BaseModel):
     text: str
     tone: Literal["neutral", "accent"] = "neutral"
@@ -103,6 +119,7 @@ class SolverGridResponse(BaseModel):
     harnesses: list[Harness]
     stages: list[StageRow]
     stage_decomposition: list[StageDecompRow] = Field(..., alias="stageDecomposition")
+    ev_decomposition: EVDecomposition = Field(..., alias="evDecomposition")
     failure_classes: list[FailureClassRow] = Field(..., alias="failureClasses")
     recommendation: Recommendation
 
@@ -231,6 +248,21 @@ def _mock_response() -> SolverGridResponse:
             FailureClassRow(failureClass="citation-no-trav", a="9%", b="5%", c="13%", d="16%"),
             FailureClassRow(failureClass="under-connected", a="8%", b="4%", c="17%", d="11%"),
         ],
+        evDecomposition=EVDecomposition(
+            harness="Harness B",
+            composite="+0.520",
+            compositeTone="success",
+            rows=[
+                EVDecompositionRow(signal="Human quality", weight="0.25", contribution="+0.220", tone="success"),
+                EVDecompositionRow(signal="Test pass rate", weight="0.15", contribution="+0.141", tone="success"),
+                EVDecompositionRow(signal="Route efficiency", weight="0.10", contribution="+0.078", tone="success"),
+                EVDecompositionRow(signal="Reliability", weight="0.15", contribution="+0.132", tone="success"),
+                EVDecompositionRow(signal="Cost", weight="0.10", contribution="−0.022", tone="danger"),
+                EVDecompositionRow(signal="Latency", weight="0.10", contribution="−0.014", tone="danger"),
+                EVDecompositionRow(signal="Regression risk", weight="0.10", contribution="−0.010", tone="danger"),
+                EVDecompositionRow(signal="Human correction", weight="0.05", contribution="−0.005", tone="danger"),
+            ],
+        ),
         recommendation=Recommendation(
             topPick=RecommendationPillContent(
                 kind="top-pick",

@@ -6,8 +6,10 @@ import { TreeNode } from "../components/TreeNode";
 import { StatusEntry, type StatusTone } from "../components/StatusEntry";
 import { NodeEVCell } from "../components/NodeEVCell";
 import { RecommendationPill } from "../components/RecommendationPill";
+import { EVDecompositionTable } from "../components/EVDecompositionTable";
 import { useSolverGrid } from "../api/useSolverGrid";
 import type {
+  EVDecomposition,
   Harness,
   Recommendation,
   SolverGridResponse,
@@ -411,9 +413,11 @@ function StageDecompositionTable({ rows }: { rows: StageDecompRow[] }) {
 function RightPane({
   stageDecomposition,
   recommendation,
+  evDecomposition,
 }: {
   stageDecomposition: StageDecompRow[];
   recommendation: Recommendation;
+  evDecomposition: EVDecomposition;
 }) {
   return (
     <aside
@@ -421,7 +425,7 @@ function RightPane({
       className={clsx(
         "w-[360px] shrink-0",
         "bg-bg-panel border-l border-border-hairline",
-        "flex flex-col gap-3 p-4",
+        "flex flex-col gap-3 p-4 overflow-y-auto",
       )}
       data-canon="rightpane-31:7"
     >
@@ -433,13 +437,14 @@ function RightPane({
         bullets={recommendation.topPick.bullets}
         className="w-full"
       />
-      <PlaceholderBox
-        label="EV decomposition"
-        figmaId="24:10"
-        className="flex-1 min-h-[180px] p-3"
+      <EVDecompositionTable
+        rows={evDecomposition.rows}
+        harness={evDecomposition.harness}
+        composite={evDecomposition.composite}
+        compositeTone={evDecomposition.compositeTone}
       />
       <StageDecompositionTable rows={stageDecomposition} />
-      <div className="flex gap-2 mt-auto">
+      <div className="flex gap-2 mt-auto pt-1">
         <Button kind="primary">Promote B</Button>
         <Button kind="secondary">Compare B vs A</Button>
         <Button kind="secondary">Export</Button>
@@ -533,6 +538,7 @@ export function SolverGrid() {
             <RightPane
               stageDecomposition={state.data.stageDecomposition}
               recommendation={state.data.recommendation}
+              evDecomposition={state.data.evDecomposition}
             />
           </>
         ) : state.status === "loading" ? (

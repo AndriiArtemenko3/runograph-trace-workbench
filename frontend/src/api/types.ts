@@ -49,6 +49,20 @@ export interface StageDecompRow {
   d: StageDecompCell;
 }
 
+export interface EVDecompositionRow {
+  signal: string;
+  weight: string;
+  contribution: string;
+  tone: "success" | "danger";
+}
+
+export interface EVDecomposition {
+  harness: string;
+  composite: string;
+  compositeTone: "success" | "danger";
+  rows: EVDecompositionRow[];
+}
+
 export interface RecommendationBullet {
   text: string;
   tone: "neutral" | "accent";
@@ -84,6 +98,7 @@ export interface SolverGridResponse {
   harnesses: Harness[];
   stages: StageRow[];
   stageDecomposition: StageDecompRow[];
+  evDecomposition: EVDecomposition;
   failureClasses: FailureClassRow[];
   recommendation: Recommendation;
 }
