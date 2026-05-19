@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
+from .api.v1.solver_grid import router as solver_grid_router
 
 app = FastAPI(
     title="runograph-backend",
@@ -18,12 +19,18 @@ app = FastAPI(
     description="Sim engine + FastAPI surface for the desktop solver",
 )
 
+# Vite dev server may bind to 5173 or auto-bump to the next free port if 5173
+# is held by another project — accept any localhost dev origin in 5170-5179
+# without re-listing every port. (Production builds are same-origin behind the
+# bundled FastAPI server, so CORS is dev-only.)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):51[0-9]{2}",
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(solver_grid_router)
 
 
 @app.get("/healthz")
@@ -34,12 +41,14 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/api/v1/harnesses")
 async def list_harnesses() -> dict[str, list[dict[str, str]]]:
-    """Stub — replaced with real DuckDB-aggregated data once sim runs land."""
+    """Lightweight harness list — kept for the old smoke probe; deprecated in
+    favour of GET /api/v1/solver-grid which carries the full grid payload.
+    """
     return {
         "harnesses": [
-            {"id": "direct", "name": "Direct baseline", "ev": "+0.20"},
-            {"id": "planner-edit", "name": "Planner + editor", "ev": "+0.52"},
-            {"id": "localise-first", "name": "Localisation-first", "ev": "−0.01"},
-            {"id": "validator-controlled", "name": "Validator-controlled", "ev": "−0.30"},
+            {"id": "A", "name": "single-sonnet", "ev": "+0.20"},
+            {"id": "B", "name": "haiku-triage → sonnet-edit", "ev": "+0.52"},
+            {"id": "C", "name": "haiku-only", "ev": "−0.11"},
+            {"id": "D", "name": "sonnet + 3-retry repair", "ev": "+0.34"},
         ]
     }

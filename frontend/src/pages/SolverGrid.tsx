@@ -1,104 +1,27 @@
 import clsx from "clsx";
 import { Button } from "../components/Button";
-import { EVCell, type EVSign, type EVMagnitude } from "../components/EVCell";
+import { EVCell } from "../components/EVCell";
 import { TreeNode } from "../components/TreeNode";
+import { useSolverGrid } from "../api/useSolverGrid";
+import type { Harness, SolverGridResponse, StageRow } from "../api/types";
 
 /**
- * Solver Grid page — Path B commit 1 + iter-2 reshape.
+ * Solver Grid page — Path B commit 1 + iter-2 reshape + commit-3 fetch wiring.
  *
- * Layout target: Figma file OvWgOsrPH5t3hL4l5bIazx page "03 Solver Grid v2"
- * (root node 31:3). Three-pane body — 320 left / 760 center / 360 right —
- * with a 56px top chrome and 36px bottom status bar.
- *
- * Iter-2 reshape: the center pane now ships three stacked sections to match
- * canon — Harness-summary row (4 cards) → Per-task EV detail matrix →
- * Failure-class breakdown — instead of a single 4×5 EV-matrix block.
+ * Data: fetched from GET /api/v1/solver-grid via useSolverGrid(). The page
+ * renders loading / error / ready states. Same canon layout as commit-1:
+ * top chrome (56) + 320 / 760 / 360 panes + 36 footer.
  *
  * Components in this page:
- *   - Real:   Button, EVCell
- *   - Stub:   TreeNode (left pane rows),       Figma master 14:55  → commit 2
- *             Harness summary cards (top),     Figma master 31:9   → composite (lands as part of commit 10 TopBar/composite work)
+ *   - Real:   Button, EVCell, TreeNode (12 + 10 + 6 variants in Storybook)
+ *   - Stub:   Harness summary cards (top),     Figma master 31:9   → composite (lands as part of commit 10 TopBar/composite work)
  *             Failure-class breakdown,         Figma master 34:38  → later
  *             Recommendation pill (top right), Figma master 22:14  → commit 6
  *             EV decomposition table (mid),    Figma master 24:10  → commit 7
  *             Stage-decomposition table,       Figma master 35:58  → derived from commit 5 atoms
  *             Status-bar entry (bottom),       Figma master 27:33  → commit 4
  *             Weight-profile selector (top),   Figma master 29:18  → commit 9
- *
- * Each stub keeps the canon position + footprint so swap-in is a one-line edit.
  */
-
-type Harness = {
-  id: "A" | "B" | "C" | "D";
-  name: string;
-  ev: string;
-  evSign: EVSign;
-  evMagnitude: EVMagnitude;
-  winner?: boolean;
-  cells: { label: string; value: string; sign: EVSign; magnitude: EVMagnitude }[];
-};
-
-const MOCK_HARNESSES: Harness[] = [
-  {
-    id: "A",
-    name: "single-sonnet",
-    ev: "+0.20",
-    evSign: "positive",
-    evMagnitude: 2,
-    cells: [
-      { label: "T1", value: "+0.18", sign: "positive", magnitude: 2 },
-      { label: "T2", value: "+0.24", sign: "positive", magnitude: 3 },
-      { label: "T3", value: "−0.08", sign: "negative", magnitude: 1 },
-      { label: "T4", value: "+0.31", sign: "positive", magnitude: 4 },
-      { label: "T5", value: "+0.15", sign: "positive", magnitude: 2 },
-    ],
-  },
-  {
-    id: "B",
-    name: "haiku-triage → sonnet-edit",
-    ev: "+0.52",
-    evSign: "positive",
-    evMagnitude: 5,
-    winner: true,
-    cells: [
-      { label: "T1", value: "+0.41", sign: "positive", magnitude: 4 },
-      { label: "T2", value: "+0.62", sign: "positive", magnitude: 5 },
-      { label: "T3", value: "+0.28", sign: "positive", magnitude: 3 },
-      { label: "T4", value: "+0.57", sign: "positive", magnitude: 5 },
-      { label: "T5", value: "+0.49", sign: "positive", magnitude: 4 },
-    ],
-  },
-  {
-    id: "C",
-    name: "haiku-only",
-    ev: "−0.11",
-    evSign: "negative",
-    evMagnitude: 2,
-    cells: [
-      { label: "T1", value: "−0.04", sign: "negative", magnitude: 1 },
-      { label: "T2", value: "+0.08", sign: "positive", magnitude: 1 },
-      { label: "T3", value: "−0.22", sign: "negative", magnitude: 3 },
-      { label: "T4", value: "−0.14", sign: "negative", magnitude: 2 },
-      { label: "T5", value: "−0.06", sign: "negative", magnitude: 1 },
-    ],
-  },
-  {
-    id: "D",
-    name: "sonnet + 3-retry repair",
-    ev: "+0.34",
-    evSign: "positive",
-    evMagnitude: 3,
-    cells: [
-      { label: "T1", value: "+0.29", sign: "positive", magnitude: 3 },
-      { label: "T2", value: "+0.41", sign: "positive", magnitude: 4 },
-      { label: "T3", value: "+0.12", sign: "positive", magnitude: 2 },
-      { label: "T4", value: "+0.38", sign: "positive", magnitude: 4 },
-      { label: "T5", value: "+0.22", sign: "positive", magnitude: 3 },
-    ],
-  },
-];
-
-const TASK_COLUMNS = ["T1", "T2", "T3", "T4", "T5"];
 
 function PlaceholderBox({
   label,
@@ -111,7 +34,6 @@ function PlaceholderBox({
   figmaId: string;
   className?: string;
   bodyExtra?: string;
-  /** Compact: single-line label only, no figma-marker line, truncates. */
   compact?: boolean;
 }) {
   return (
@@ -180,9 +102,6 @@ function ViewSwitcher() {
           role="tab"
           aria-selected={v.active ?? false}
           className={clsx(
-            // h-8 = 32 px (Tailwind default). Project spacing token 7 = 48 px,
-            // so h-7 here would have ballooned the bar — use the default
-            // Tailwind scale for chrome-row heights.
             "h-8 px-3 rounded-sm font-sans text-base font-medium",
             "transition-colors",
             "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-primary",
@@ -199,11 +118,10 @@ function ViewSwitcher() {
   );
 }
 
-function TopBar() {
+function TopBar({ weightProfile }: { weightProfile: string }) {
   return (
     <header
       className={clsx(
-        // Canon h=56 (Figma 125:2).
         "h-14 shrink-0 flex items-center justify-between",
         "px-4 gap-3",
         "bg-bg-panel border-b border-border-hairline",
@@ -223,7 +141,7 @@ function TopBar() {
 
       <div className="flex items-center gap-2">
         <PlaceholderBox
-          label="Weight: balanced"
+          label={`Weight: ${weightProfile}`}
           figmaId="29:18"
           className="h-8 w-40"
           compact
@@ -234,22 +152,24 @@ function TopBar() {
   );
 }
 
-type LeftPaneRow = { label: string; value?: string; selected?: boolean };
-
-function LeftPane() {
-  const harnessRows: LeftPaneRow[] = MOCK_HARNESSES.map((h) => ({
+function LeftPane({
+  harnesses,
+  stages,
+}: {
+  harnesses: Harness[];
+  stages: StageRow[];
+}) {
+  const harnessRows = harnesses.map((h) => ({
     label: h.name,
     value: h.ev,
     selected: h.winner,
   }));
-  const stageRows: LeftPaneRow[] = [
-    { label: "plan", value: "+0.04" },
-    { label: "search", value: "+0.07" },
-    { label: "edit", value: "+0.31", selected: true },
-    { label: "test", value: "+0.06" },
-    { label: "review", value: "+0.04" },
-  ];
-  const sections: { title: string; rows: LeftPaneRow[] }[] = [
+  const stageRows = stages.map((s) => ({
+    label: s.stage,
+    value: s.ev,
+    selected: s.selected,
+  }));
+  const sections = [
     { title: "Harnesses", rows: harnessRows },
     { title: "Stages", rows: stageRows },
   ];
@@ -284,18 +204,12 @@ function LeftPane() {
   );
 }
 
-function HarnessSummaryRow() {
-  const ci: Record<Harness["id"], string> = {
-    A: "±0.04",
-    B: "±0.03",
-    C: "±0.05",
-    D: "±0.06",
-  };
+function HarnessSummaryRow({ harnesses }: { harnesses: Harness[] }) {
   return (
     <section aria-label="Harness summary">
       <h3 className="sr-only">Harness summary</h3>
       <div className="grid grid-cols-4 gap-3">
-        {MOCK_HARNESSES.map((h) => (
+        {harnesses.map((h) => (
           <article
             key={h.id}
             className={clsx(
@@ -330,7 +244,7 @@ function HarnessSummaryRow() {
               {h.ev}
             </div>
             <div className="text-text-secondary text-2xs font-mono">
-              95% CI {ci[h.id]}
+              95% CI {h.ci}
             </div>
           </article>
         ))}
@@ -339,7 +253,8 @@ function HarnessSummaryRow() {
   );
 }
 
-function PerTaskMatrix() {
+function PerTaskMatrix({ harnesses }: { harnesses: Harness[] }) {
+  const taskLabels = harnesses[0]?.cells.map((c) => c.label) ?? [];
   return (
     <div>
       <SectionHeader
@@ -353,7 +268,7 @@ function PerTaskMatrix() {
               <th className="w-[180px] text-left text-text-secondary text-xs font-normal uppercase tracking-wide pl-1 pb-2">
                 Harness
               </th>
-              {TASK_COLUMNS.map((t) => (
+              {taskLabels.map((t) => (
                 <th
                   key={t}
                   className="w-[120px] text-center text-text-secondary text-xs font-normal uppercase tracking-wide pb-2"
@@ -367,7 +282,7 @@ function PerTaskMatrix() {
             </tr>
           </thead>
           <tbody>
-            {MOCK_HARNESSES.map((h) => (
+            {harnesses.map((h) => (
               <tr key={h.id}>
                 <td
                   className={clsx(
@@ -405,7 +320,7 @@ function PerTaskMatrix() {
   );
 }
 
-function CenterPane() {
+function CenterPane({ data }: { data: SolverGridResponse }) {
   return (
     <section
       className="flex-1 min-w-0 bg-bg-canvas flex flex-col"
@@ -413,22 +328,26 @@ function CenterPane() {
     >
       <div className="px-4 pt-4 pb-3">
         <h2 className="font-sans text-lg font-medium text-text-primary">
-          Multi-harness solver · bug-fix task class
+          Multi-harness solver · {data.taskClass} task class
         </h2>
         <p className="text-text-secondary text-sm">
-          4 harnesses × 1,200 sims each · 95% CI ·{" "}
-          <span className="text-text-primary">iter 7,412 of 12,000</span>
+          {data.harnesses.length} harnesses × {data.simsPerHarness.toLocaleString()} sims each · 95%
+          CI ·{" "}
+          <span className="text-text-primary">
+            iter {data.iterComplete.toLocaleString()} of{" "}
+            {data.iterTotal.toLocaleString()}
+          </span>
         </p>
       </div>
 
       <div className="px-4 pb-4 flex flex-col gap-4 overflow-auto">
-        <HarnessSummaryRow />
-        <PerTaskMatrix />
+        <HarnessSummaryRow harnesses={data.harnesses} />
+        <PerTaskMatrix harnesses={data.harnesses} />
         <PlaceholderBox
           label="Failure-class breakdown"
           figmaId="34:38"
           className="h-44 p-3"
-          bodyExtra="orphan-loop / skip-load-bearing / context-overflow / citation-no-trav / under-connected × A B C D"
+          bodyExtra={data.failureClasses.map((f) => f.failureClass).join(" / ")}
         />
       </div>
     </section>
@@ -446,9 +365,6 @@ function RightPane() {
       )}
       data-canon="rightpane-31:7"
     >
-      {/* Canon proportions: Recommendation ≈ 197, EV decomp ≈ 609 (dominant),
-          Stage decomp small. h-32 + flex-1 + h-16 approximates 0.22 / 0.67 /
-          0.11 of the pane height — matches canon within rounding. */}
       <PlaceholderBox
         label="Recommendation"
         figmaId="22:14"
@@ -517,16 +433,50 @@ function BottomBar() {
   );
 }
 
+function LoadingPane() {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex-1 flex items-center justify-center text-text-secondary text-sm font-mono"
+    >
+      Loading solver grid…
+    </div>
+  );
+}
+
+function ErrorPane({ message }: { message: string }) {
+  return (
+    <div
+      role="alert"
+      className="flex-1 flex flex-col items-center justify-center gap-2 text-status-danger text-sm font-mono"
+    >
+      <div>Could not load solver grid.</div>
+      <div className="text-text-tertiary text-xs">{message}</div>
+    </div>
+  );
+}
+
 export function SolverGrid() {
+  const state = useSolverGrid();
   return (
     <div className="min-h-screen w-screen flex flex-col bg-bg-canvas text-text-primary">
-      {/* Visually-hidden page heading anchors the landmark/heading tree. */}
       <h1 className="sr-only">RunoGraph Solver Grid</h1>
-      <TopBar />
+      <TopBar
+        weightProfile={state.status === "ready" ? state.data.weightProfile : "balanced"}
+      />
       <main className="flex-1 flex min-h-0">
-        <LeftPane />
-        <CenterPane />
-        <RightPane />
+        {state.status === "ready" ? (
+          <>
+            <LeftPane harnesses={state.data.harnesses} stages={state.data.stages} />
+            <CenterPane data={state.data} />
+            <RightPane />
+          </>
+        ) : state.status === "loading" ? (
+          <LoadingPane />
+        ) : (
+          <ErrorPane message={state.error} />
+        )}
       </main>
       <BottomBar />
     </div>
