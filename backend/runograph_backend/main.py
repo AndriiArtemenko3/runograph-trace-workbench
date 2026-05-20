@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .api.v1.heatmap import router as heatmap_router
 from .api.v1.solver_grid import router as solver_grid_router
+from .api.v1.stagetree import router as stagetree_router
 
 app = FastAPI(
     title="runograph-backend",
@@ -33,6 +34,7 @@ app.add_middleware(
 
 app.include_router(solver_grid_router)
 app.include_router(heatmap_router)
+app.include_router(stagetree_router)
 
 
 @app.get("/healthz")
