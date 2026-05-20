@@ -1,12 +1,27 @@
 import { SolverGrid } from "./pages/SolverGrid";
+import { HeatMap } from "./pages/HeatMap";
+import { StageTree } from "./pages/StageTree";
+import { Editor } from "./pages/Editor";
+import { useHashRoute } from "./router";
 
 /**
- * Root route — single Solver Grid view for v0.3 alpha.
+ * App root — hash-routed between the 4 solver views.
  *
- * Heat-map / Stage-tree / Editor pages mount here once they port over
- * (commits after Path B's first 10). Hash-based switching gets added
- * when the second page lands; one page does not need a router.
+ * The ViewSwitcher inside AppShell mutates the same hash via
+ * useHashRoute, so clicking a tab swaps the page without remounting
+ * the chrome.
  */
 export default function App() {
-  return <SolverGrid />;
+  const [view] = useHashRoute();
+  switch (view) {
+    case "heatmap":
+      return <HeatMap />;
+    case "stagetree":
+      return <StageTree />;
+    case "editor":
+      return <Editor />;
+    case "matrix":
+    default:
+      return <SolverGrid />;
+  }
 }

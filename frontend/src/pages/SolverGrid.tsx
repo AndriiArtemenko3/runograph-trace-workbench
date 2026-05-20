@@ -1,14 +1,13 @@
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import clsx from "clsx";
 import { Button } from "../components/Button";
 import { EVCell } from "../components/EVCell";
 import { NodeEVCell } from "../components/NodeEVCell";
 import { RecommendationPill } from "../components/RecommendationPill";
 import { EVDecompositionTable } from "../components/EVDecompositionTable";
-import { TopBar } from "../components/composites/TopBar";
 import { LeftPane, type LeftPaneSection } from "../components/composites/LeftPane";
-import { BottomBar, type BottomBarEntry } from "../components/composites/BottomBar";
-import type { SolverView } from "../components/ViewSwitcher";
+import { type BottomBarEntry } from "../components/composites/BottomBar";
+import { AppShell } from "./AppShell";
 import { useSolverGrid } from "../api/useSolverGrid";
 import type {
   EVDecomposition,
@@ -407,39 +406,32 @@ function buildBottomBarEntries(
 
 export function SolverGrid() {
   const state = useSolverGrid();
-  const [activeView, setActiveView] = useState<SolverView>("matrix");
   const bottomEntries = buildBottomBarEntries(
     state.status === "ready" ? state.data : null,
   );
   return (
-    <div className="min-h-screen w-screen flex flex-col bg-bg-canvas text-text-primary">
-      <h1 className="sr-only">RunoGraph Solver Grid</h1>
-      <TopBar
-        crumb="/ 03 Solver Grid"
-        weightProfile={
-          state.status === "ready" ? state.data.weightProfile : "balanced"
-        }
-        activeView={activeView}
-        onViewChange={setActiveView}
-      />
-      <main className="flex-1 flex min-h-0">
-        {state.status === "ready" ? (
-          <>
-            <LeftPane sections={buildLeftPaneSections(state.data)} />
-            <CenterPane data={state.data} />
-            <RightPane
-              stageDecomposition={state.data.stageDecomposition}
-              recommendation={state.data.recommendation}
-              evDecomposition={state.data.evDecomposition}
-            />
-          </>
-        ) : state.status === "loading" ? (
-          <LoadingPane />
-        ) : (
-          <ErrorPane message={state.error} />
-        )}
-      </main>
-      <BottomBar left={bottomEntries.left} right={bottomEntries.right} />
-    </div>
+    <AppShell
+      crumb="/ 03 Solver Grid"
+      pageTitle="RunoGraph Solver Grid"
+      weightProfile={state.status === "ready" ? state.data.weightProfile : "balanced"}
+      bottomLeft={bottomEntries.left}
+      bottomRight={bottomEntries.right}
+    >
+      {state.status === "ready" ? (
+        <>
+          <LeftPane sections={buildLeftPaneSections(state.data)} />
+          <CenterPane data={state.data} />
+          <RightPane
+            stageDecomposition={state.data.stageDecomposition}
+            recommendation={state.data.recommendation}
+            evDecomposition={state.data.evDecomposition}
+          />
+        </>
+      ) : state.status === "loading" ? (
+        <LoadingPane />
+      ) : (
+        <ErrorPane message={state.error} />
+      )}
+    </AppShell>
   );
 }
