@@ -1,11 +1,18 @@
 """FastAPI entry point for the runograph-app backend.
 
 Endpoints serve sim results to the React UI. During Phase A (weeks 1-3) the
-endpoints return mock data; Phase B+ wires them to the real sim runner + DuckDB
-aggregator.
+endpoints return mock data; Phase B+ wires them to the real sim runner +
+DuckDB aggregator.
+
+Phase-B trace store: SQLite via storage.db. Tables are created idempotently
+on lifespan startup so a fresh `uvicorn` invocation works against an empty
+~/.runograph/runs/.../runograph.sqlite without an explicit migration step.
 """
 
 from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,13 +20,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .api.v1.editor import router as editor_router
 from .api.v1.heatmap import router as heatmap_router
+from .api.v1.runs import router as runs_router
 from .api.v1.solver_grid import router as solver_grid_router
 from .api.v1.stagetree import router as stagetree_router
+from .storage.db import init_db
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    await init_db()
+    yield
+
 
 app = FastAPI(
     title="runograph-backend",
     version=__version__,
     description="Sim engine + FastAPI surface for the desktop solver",
+    lifespan=_lifespan,
 )
 
 # Vite dev server may bind to 5173 or auto-bump to the next free port if 5173
@@ -37,6 +54,7 @@ app.include_router(solver_grid_router)
 app.include_router(heatmap_router)
 app.include_router(stagetree_router)
 app.include_router(editor_router)
+app.include_router(runs_router)
 
 
 @app.get("/healthz")

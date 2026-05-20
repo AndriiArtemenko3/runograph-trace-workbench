@@ -1,0 +1,12 @@
+{
+  "runId": "sample-run-0001",
+  "taskId": "pylint-dev__pylint-7993",
+  "model": "claude-sonnet-4-6",
+  "startedAt": "2026-05-20T14:00:00Z",
+  "endedAt": "2026-05-20T14:02:17Z",
+  "outcome": "pass",
+  "totalTokens": 11842,
+  "totalCostUsd": 0.12,
+  "experimentId": "runograph-50",
+  "settingsHash": "sha256:deadbeef"
+}
