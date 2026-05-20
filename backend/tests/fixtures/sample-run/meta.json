@@ -7,6 +7,6 @@
   "outcome": "pass",
   "totalTokens": 11842,
   "totalCostUsd": 0.12,
-  "experimentId": "runograph-50",
+  "experimentId": "fixture-test",
   "settingsHash": "sha256:deadbeef"
 }

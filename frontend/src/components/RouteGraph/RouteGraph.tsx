@@ -179,17 +179,35 @@ export function RouteGraph({
                   {n.avgTimeSeconds.toFixed(2)}s avg
                 </title>
               </circle>
-              {labels ? (
-                <text
-                  x={p.x}
-                  y={p.y + r + 9}
-                  textAnchor="middle"
-                  className="font-mono fill-text-secondary"
-                  style={{ fontSize: 9 }}
-                >
-                  {basename(n.target).slice(0, 18)}
-                </text>
-              ) : null}
+              {labels ? (() => {
+                // Push label away from center to reduce overlap in dense
+                // middle. Labels above for top-half nodes, below for bottom.
+                const labelBelow = p.y >= height / 2;
+                const labelY = labelBelow ? p.y + r + 9 : p.y - r - 4;
+                const text = basename(n.target).slice(0, 12);
+                return (
+                  <>
+                    <text
+                      x={p.x}
+                      y={labelY}
+                      textAnchor="middle"
+                      className="fill-bg-canvas"
+                      style={{ fontSize: 9, strokeWidth: 3, paintOrder: "stroke", stroke: "var(--color-bg-canvas, #0b0e14)" }}
+                    >
+                      {text}
+                    </text>
+                    <text
+                      x={p.x}
+                      y={labelY}
+                      textAnchor="middle"
+                      className="font-mono fill-text-secondary"
+                      style={{ fontSize: 9 }}
+                    >
+                      {text}
+                    </text>
+                  </>
+                );
+              })() : null}
             </g>
           );
         })}

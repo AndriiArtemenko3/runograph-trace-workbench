@@ -51,10 +51,27 @@ export interface RouteMetricsProps {
   title: string;
   subtitle?: string;
   metrics: Record<string, number>;
+  /** Experiment-wide reference values (e.g. size-weighted mean across
+   *  clusters). When provided, each metric row gets a 3-px bar showing the
+   *  current value on a 0..1 axis with a baseline marker. */
+  baseline?: Record<string, number>;
   className?: string;
 }
 
-export function RouteMetrics({ title, subtitle, metrics, className }: RouteMetricsProps) {
+function clamp01(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  if (x < 0) return 0;
+  if (x > 1) return 1;
+  return x;
+}
+
+export function RouteMetrics({
+  title,
+  subtitle,
+  metrics,
+  baseline,
+  className,
+}: RouteMetricsProps) {
   return (
     <section
       aria-label="Route metrics"
@@ -72,6 +89,10 @@ export function RouteMetrics({ title, subtitle, metrics, className }: RouteMetri
       <dl className="grid grid-cols-2 gap-2 m-0">
         {METRIC_ORDER.map((m) => {
           const v = metrics[m.key] ?? 0;
+          const base = baseline?.[m.key];
+          const showBar = base != null && Number.isFinite(base);
+          const valuePct = clamp01(v) * 100;
+          const basePct = showBar ? clamp01(base) * 100 : 0;
           return (
             <div key={m.key} className="flex flex-col">
               <dt className="text-text-tertiary text-2xs uppercase tracking-wide">
@@ -85,6 +106,23 @@ export function RouteMetrics({ title, subtitle, metrics, className }: RouteMetri
               >
                 {format(v)}
               </dd>
+              {showBar ? (
+                <div
+                  className="relative mt-1 h-[3px] w-full bg-border-subtle rounded-full"
+                  role="img"
+                  aria-label={`${m.label} ${format(v)}, baseline ${format(base)}`}
+                  title={`baseline ${format(base)}`}
+                >
+                  <div
+                    className="absolute inset-y-0 left-0 bg-accent-primary rounded-full"
+                    style={{ width: `${valuePct}%` }}
+                  />
+                  <div
+                    className="absolute -top-[2px] h-[7px] w-[2px] bg-text-secondary"
+                    style={{ left: `calc(${basePct}% - 1px)` }}
+                  />
+                </div>
+              ) : null}
             </div>
           );
         })}

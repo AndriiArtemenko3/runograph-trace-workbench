@@ -52,6 +52,20 @@ export interface RouteRunResponse {
   metrics: Record<string, number>;
 }
 
+/** One row from /api/v1/runs?experimentId=... — header summary, no graph. */
+export interface RunSummary {
+  runId: string;
+  taskId: string;
+  model: string;
+  outcome: "pass" | "fail" | "error" | string;
+  totalTokens: number;
+  totalCostUsd: number;
+  startedAt: string;
+  endedAt: string;
+  experimentId: string;
+  eventCount: number;
+}
+
 export type AsyncState<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
@@ -93,5 +107,13 @@ export function useRouteClusters(
 export function useRunRoute(runId: string | null): AsyncState<RouteRunResponse> {
   return useFetched<RouteRunResponse>(
     runId ? `/api/v1/routes/run/${encodeURIComponent(runId)}` : null,
+  );
+}
+
+/** Per-experiment run list. Backend returns rows for adjacent experiments
+ *  too, so callers should filter on experimentId. */
+export function useRunsList(experimentId: string): AsyncState<RunSummary[]> {
+  return useFetched<RunSummary[]>(
+    `/api/v1/runs?experimentId=${encodeURIComponent(experimentId)}`,
   );
 }

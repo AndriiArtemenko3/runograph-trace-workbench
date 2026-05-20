@@ -57,7 +57,7 @@ async def test_ingest_writes_run_and_events(session):
     assert run.task_id == "pylint-dev__pylint-7993"
     assert run.model == "claude-sonnet-4-6"
     assert run.outcome == "pass"
-    assert run.experiment_id == "runograph-50"
+    assert run.experiment_id == "fixture-test"
     assert run.total_tokens == 11842
 
     # 10 events landed

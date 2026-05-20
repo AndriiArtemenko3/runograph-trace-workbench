@@ -8,9 +8,11 @@ import { RouteMetrics } from "../components/RouteMetrics";
 import {
   useRouteClusters,
   useRunRoute,
+  useRunsList,
   type ClusterSummary,
   type ClustersResponse,
   type RouteRunResponse,
+  type RunSummary,
 } from "../api/routes";
 
 /**
@@ -32,16 +34,98 @@ type ViewMode =
   | { kind: "cluster"; clusterId: number }
   | { kind: "run"; runId: string };
 
+/** Per-outcome run buckets for a cluster — used to colour dots, drive the
+ *  outcome-mix subtitle on the metrics card, and inform the size-weighted
+ *  baseline. */
+interface OutcomeMix {
+  pass: number;
+  fail: number;
+  error: number;
+  total: number;
+}
+
+function outcomeMixFor(
+  cluster: ClusterSummary,
+  runsById: Map<string, RunSummary>,
+): OutcomeMix {
+  const mix: OutcomeMix = { pass: 0, fail: 0, error: 0, total: 0 };
+  for (const rid of cluster.memberRunIds) {
+    const r = runsById.get(rid);
+    mix.total += 1;
+    if (!r) continue;
+    if (r.outcome === "pass") mix.pass += 1;
+    else if (r.outcome === "fail") mix.fail += 1;
+    else mix.error += 1;
+  }
+  return mix;
+}
+
+function dotClassFor(outcome: string | undefined): string {
+  if (outcome === "pass") return "bg-status-success";
+  if (outcome === "fail") return "bg-status-danger";
+  return "bg-text-tertiary";
+}
+
+/** Map cost → 4-10 px radius via sqrt; tight clusters stay readable. */
+function dotPixelsFor(
+  cost: number | undefined,
+  maxCost: number,
+): { width: number; height: number } {
+  const safeMax = maxCost > 0 ? maxCost : 1;
+  const c = cost && cost > 0 ? cost : 0;
+  const norm = Math.sqrt(c / safeMax);
+  const px = Math.max(6, Math.min(14, Math.round(6 + norm * 8)));
+  return { width: px, height: px };
+}
+
+function formatDuration(startedAt: string, endedAt: string): string {
+  const ms = Date.parse(endedAt) - Date.parse(startedAt);
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m${r.toString().padStart(2, "0")}s`;
+}
+
+function formatCost(usd: number | undefined): string {
+  if (usd == null || !Number.isFinite(usd)) return "—";
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(3)}`;
+}
+
+function formatTokens(n: number | undefined): string {
+  if (!n) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return n.toString();
+}
+
+function clusterLabel(c: ClusterSummary): string {
+  return c.clusterId === 0 ? "No-route" : `Cluster ${c.clusterId}`;
+}
+
+/** Left pane is sorted by size descending; No-route pins to the bottom
+ *  (it's a special class — runs with no captured trace). */
+function sortClustersForLeftPane(clusters: ClusterSummary[]): ClusterSummary[] {
+  return [...clusters].sort((a, b) => {
+    if (a.clusterId === 0) return 1;
+    if (b.clusterId === 0) return -1;
+    return b.size - a.size;
+  });
+}
+
 function buildLeftPaneSections(
   clusters: ClusterSummary[],
   selectedClusterId: number | null,
   selectedRunId: string | null,
 ): LeftPaneSection[] {
+  const sorted = sortClustersForLeftPane(clusters);
   const sections: LeftPaneSection[] = [
     {
       title: "Clusters",
-      rows: clusters.map((c) => ({
-        label: c.clusterId === 0 ? "No-route" : `Cluster ${c.clusterId}`,
+      rows: sorted.map((c) => ({
+        label: clusterLabel(c),
         value: `${c.size}`,
         selected: c.clusterId === selectedClusterId,
       })),
@@ -51,7 +135,7 @@ function buildLeftPaneSections(
   const active = clusters.find((c) => c.clusterId === selectedClusterId);
   if (active) {
     sections.push({
-      title: `Cluster ${active.clusterId === 0 ? "No-route" : active.clusterId} runs`,
+      title: `${clusterLabel(active)} runs`,
       rows: active.memberRunIds.map((rid) => ({
         label: rid.replace(/^runograph-50-/, ""),
         value: rid === active.representativeRunId ? "rep" : "",
@@ -65,11 +149,17 @@ function buildLeftPaneSections(
 function ClusterCard({
   cluster,
   onSelect,
+  gridSpan,
+  outcomeMix,
 }: {
   cluster: ClusterSummary;
   onSelect: () => void;
+  gridSpan: number;
+  outcomeMix: OutcomeMix | null;
 }) {
   const isEmpty = cluster.representativeGraph.nodes.length === 0;
+  const nodeCount = cluster.representativeGraph.nodes.length;
+  const seqLen = cluster.representativeGraph.sequenceLength;
   return (
     <button
       type="button"
@@ -81,36 +171,74 @@ function ClusterCard({
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-primary",
       )}
       data-cluster={cluster.clusterId}
+      style={{ gridColumn: `span ${gridSpan} / span ${gridSpan}` }}
     >
       <header className="flex items-baseline justify-between">
         <h3 className="font-sans text-sm font-medium text-text-primary">
-          {cluster.clusterId === 0 ? "No-route" : `Cluster ${cluster.clusterId}`}
+          {clusterLabel(cluster)}
         </h3>
         <span className="font-mono text-xs text-text-tertiary tabular-nums">
           {cluster.size} {cluster.size === 1 ? "run" : "runs"}
+          {outcomeMix && outcomeMix.total > 0 ? (
+            <>
+              {" · "}
+              <span className="text-status-success">{outcomeMix.pass}p</span>
+              {outcomeMix.fail > 0 ? (
+                <>
+                  {" "}
+                  <span className="text-status-danger">{outcomeMix.fail}f</span>
+                </>
+              ) : null}
+              {outcomeMix.error > 0 ? (
+                <>
+                  {" "}
+                  <span className="text-text-tertiary">{outcomeMix.error}e</span>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </span>
       </header>
       <div className="bg-bg-canvas rounded border border-border-subtle flex items-center justify-center min-h-[160px]">
         {isEmpty ? (
-          <span className="text-text-tertiary text-xs font-mono">
-            empty route
-          </span>
+          <div className="flex flex-col items-center gap-2 p-3 text-center">
+            <span className="text-status-danger text-xs font-mono">
+              0 events captured
+            </span>
+            <span className="text-text-tertiary text-2xs font-mono">
+              {cluster.size} {cluster.size === 1 ? "run" : "runs"} failed
+              before producing any trace
+            </span>
+            <div className="flex flex-wrap justify-center gap-1 max-w-[200px]">
+              {cluster.memberRunIds.slice(0, 6).map((rid) => (
+                <span
+                  key={rid}
+                  className="font-mono text-2xs px-1.5 py-0.5 rounded bg-bg-elevated text-text-tertiary"
+                >
+                  {rid.replace(/^runograph-50-/, "")}
+                </span>
+              ))}
+              {cluster.memberRunIds.length > 6 ? (
+                <span className="font-mono text-2xs text-text-tertiary">
+                  +{cluster.memberRunIds.length - 6}
+                </span>
+              ) : null}
+            </div>
+          </div>
         ) : (
           <RouteGraph
             nodes={cluster.representativeGraph.nodes}
             edges={cluster.representativeGraph.edges}
-            width={260}
-            height={160}
+            width={gridSpan >= 4 ? 540 : 260}
+            height={gridSpan >= 4 ? 200 : 160}
           />
         )}
       </div>
-      <div className="flex items-center justify-between text-2xs font-mono text-text-tertiary">
+      <div className="flex items-center justify-end text-2xs font-mono text-text-tertiary">
         <span>
-          rep {cluster.representativeRunId.replace(/^runograph-50-/, "")}
-        </span>
-        <span>
-          {cluster.representativeGraph.sequenceLength} events · {" "}
-          {cluster.representativeGraph.nodes.length} nodes
+          {seqLen} {seqLen === 1 ? "event" : "events"}
+          {" · "}
+          {nodeCount} {nodeCount === 1 ? "node" : "nodes"}
         </span>
       </div>
     </button>
@@ -120,20 +248,26 @@ function ClusterCard({
 function ClusterFocus({
   cluster,
   onRunSelect,
+  runsById,
 }: {
   cluster: ClusterSummary;
   onRunSelect: (runId: string) => void;
+  runsById: Map<string, RunSummary>;
 }) {
+  // Cost-sizing reference: largest cost within this cluster's members.
+  const maxCost = cluster.memberRunIds.reduce((m, rid) => {
+    const c = runsById.get(rid)?.totalCostUsd ?? 0;
+    return c > m ? c : m;
+  }, 0);
+
   return (
     <article className="flex flex-col gap-3">
       <header>
         <h2 className="font-sans text-lg font-medium text-text-primary">
-          {cluster.clusterId === 0
-            ? "No-route family"
-            : `Path family ${cluster.clusterId}`}
+          {clusterLabel(cluster)}
         </h2>
         <p className="text-text-secondary text-sm">
-          {cluster.size} {cluster.size === 1 ? "run" : "runs"} · representative {" "}
+          {cluster.size} {cluster.size === 1 ? "run" : "runs"} · representative{" "}
           <span className="font-mono text-text-primary">
             {cluster.representativeRunId}
           </span>
@@ -142,7 +276,7 @@ function ClusterFocus({
       <div className="bg-bg-panel rounded-md border border-border-hairline p-3">
         {cluster.representativeGraph.nodes.length === 0 ? (
           <div className="flex items-center justify-center min-h-[480px] text-text-tertiary text-sm font-mono">
-            (this family contains runs that produced no events)
+            (this cluster contains runs that produced no events)
           </div>
         ) : (
           <RouteGraph
@@ -158,25 +292,41 @@ function ClusterFocus({
       <section className="bg-bg-panel rounded-md border border-border-hairline p-3">
         <h3 className="text-text-secondary text-xs uppercase tracking-wide pb-2">
           Member runs
+          <span className="ml-2 text-text-tertiary text-2xs normal-case tracking-normal font-mono">
+            (colour = outcome, size = cost)
+          </span>
         </h3>
         <ul className="grid grid-cols-5 gap-1 m-0 p-0 list-none">
-          {cluster.memberRunIds.map((rid) => (
-            <li key={rid}>
-              <button
-                type="button"
-                onClick={() => onRunSelect(rid)}
-                className="w-full flex items-center gap-1.5 px-2 py-1 rounded hover:bg-bg-elevated text-left"
-              >
-                <span
-                  aria-hidden="true"
-                  className="h-2 w-2 rounded-full bg-status-success shrink-0"
-                />
-                <span className="font-mono text-2xs text-text-secondary truncate">
-                  {rid.replace(/^runograph-50-/, "")}
-                </span>
-              </button>
-            </li>
-          ))}
+          {cluster.memberRunIds.map((rid) => {
+            const r = runsById.get(rid);
+            const dotPx = dotPixelsFor(r?.totalCostUsd, maxCost);
+            const dotCls = dotClassFor(r?.outcome);
+            const titleParts = [
+              rid,
+              r ? r.outcome : "outcome unknown",
+              r ? formatCost(r.totalCostUsd) : "",
+              r ? `${formatTokens(r.totalTokens)} tok` : "",
+            ].filter(Boolean);
+            return (
+              <li key={rid}>
+                <button
+                  type="button"
+                  onClick={() => onRunSelect(rid)}
+                  title={titleParts.join(" · ")}
+                  className="w-full flex items-center gap-1.5 px-2 py-1 rounded hover:bg-bg-elevated text-left"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={clsx("rounded-full shrink-0", dotCls)}
+                    style={{ width: dotPx.width, height: dotPx.height }}
+                  />
+                  <span className="font-mono text-2xs text-text-secondary truncate">
+                    {rid.replace(/^runograph-50-/, "")}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       </section>
     </article>
@@ -185,15 +335,30 @@ function ClusterFocus({
 
 function RunFocus({
   run,
+  summary,
+  cluster,
+  clusterCostMean,
+  costRank,
   onBack,
 }: {
   run: RouteRunResponse;
+  summary: RunSummary | undefined;
+  cluster: ClusterSummary | undefined;
+  clusterCostMean: number | null;
+  costRank: { rank: number; size: number } | null;
   onBack: () => void;
 }) {
+  const ratio =
+    summary && clusterCostMean && clusterCostMean > 0
+      ? summary.totalCostUsd / clusterCostMean
+      : null;
+  const duration = summary
+    ? formatDuration(summary.startedAt, summary.endedAt)
+    : "—";
   return (
     <article className="flex flex-col gap-3">
       <header className="flex items-start justify-between gap-3">
-        <div>
+        <div className="flex flex-col gap-1">
           <h2 className="font-sans text-lg font-medium text-text-primary">
             Run {run.runId}
           </h2>
@@ -212,6 +377,32 @@ function RunFocus({
               {run.outcome}
             </span>
           </p>
+          {summary ? (
+            <p className="text-text-secondary text-sm font-mono tabular-nums">
+              <span className="text-text-primary">
+                {summary.eventCount} {summary.eventCount === 1 ? "event" : "events"}
+              </span>
+              <span className="text-text-tertiary"> · </span>
+              <span className="text-text-primary">
+                {formatTokens(summary.totalTokens)} tok
+              </span>
+              <span className="text-text-tertiary"> · </span>
+              <span className="text-text-primary">
+                {formatCost(summary.totalCostUsd)}
+              </span>
+              <span className="text-text-tertiary"> · </span>
+              <span className="text-text-primary">{duration}</span>
+              {ratio && cluster ? (
+                <span className="ml-2 text-text-tertiary">
+                  ({ratio.toFixed(2)}× {clusterLabel(cluster)} mean
+                  {costRank
+                    ? `, rank #${costRank.rank} of ${costRank.size}`
+                    : ""}
+                  )
+                </span>
+              ) : null}
+            </p>
+          ) : null}
         </div>
         <button
           type="button"
@@ -243,10 +434,19 @@ function RunFocus({
 
 function buildBottomBarEntries(
   data: ClustersResponse | null,
+  runs: RunSummary[],
 ): { left: BottomBarEntry[]; right: BottomBarEntry[] } {
   const totalRuns = data
     ? data.clusters.reduce((acc, c) => acc + c.size, 0)
     : 0;
+
+  const passCount = runs.reduce(
+    (n, r) => (r.outcome === "pass" ? n + 1 : n),
+    0,
+  );
+  const spendUsd = runs.reduce((s, r) => s + (r.totalCostUsd ?? 0), 0);
+  const passPct = runs.length > 0 ? Math.round((passCount / runs.length) * 100) : null;
+
   return {
     left: [
       {
@@ -262,12 +462,28 @@ function buildBottomBarEntries(
       {
         tone: "success",
         label: data ? `k=${data.k}` : "—",
-        detail: data ? `${data.clusters.length} path families` : "",
+        detail: data ? `${data.clusters.length} clusters` : "",
       },
     ],
     right: [
-      { tone: "info", label: "agg. graph", detail: data ? `${data.aggregateGraph.nodes.length} nodes` : "—" },
-      { tone: "success", label: "v0.3-alpha", detail: "routes" },
+      {
+        tone: "info",
+        label: "agg. graph",
+        detail: data ? `${data.aggregateGraph.nodes.length} nodes` : "—",
+      },
+      {
+        tone: "success",
+        label: "pass rate",
+        detail:
+          runs.length > 0 && passPct != null
+            ? `${passCount}/${runs.length} (${passPct}%)`
+            : "—",
+      },
+      {
+        tone: "warning",
+        label: "spend",
+        detail: runs.length > 0 ? `$${spendUsd.toFixed(2)}` : "—",
+      },
     ],
   };
 }
@@ -277,6 +493,7 @@ export function Routes() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   const clustersState = useRouteClusters(DEFAULT_EXPERIMENT);
+  const runsListState = useRunsList(DEFAULT_EXPERIMENT);
   const runState = useRunRoute(selectedRunId);
 
   const view: ViewMode = useMemo(() => {
@@ -288,11 +505,73 @@ export function Routes() {
 
   const clusters =
     clustersState.status === "ready" ? clustersState.data.clusters : [];
+
+  // Filter runs to the current experiment — backend returns adjacent rows too.
+  const runs = useMemo(() => {
+    if (runsListState.status !== "ready") return [] as RunSummary[];
+    return runsListState.data.filter(
+      (r) => r.experimentId === DEFAULT_EXPERIMENT,
+    );
+  }, [runsListState]);
+
+  const runsById = useMemo(() => {
+    const m = new Map<string, RunSummary>();
+    for (const r of runs) m.set(r.runId, r);
+    return m;
+  }, [runs]);
+
   const activeCluster = clusters.find((c) => c.clusterId === selectedClusterId);
   const sections = buildLeftPaneSections(clusters, selectedClusterId, selectedRunId);
   const bottomEntries = buildBottomBarEntries(
     clustersState.status === "ready" ? clustersState.data : null,
+    runs,
   );
+
+  // Size-weighted experiment baseline across cluster.metrics for the
+  // overview metrics card and the per-cluster baseline marker.
+  const totalRunsAcrossClusters = clusters.reduce((a, c) => a + c.size, 0);
+  const baselineMetrics = useMemo(() => {
+    const out: Record<string, number> = {};
+    const first = clusters[0];
+    if (!first || totalRunsAcrossClusters === 0) return out;
+    const keys = Object.keys(first.metrics);
+    for (const k of keys) {
+      out[k] =
+        clusters.reduce((a, c) => a + (c.metrics[k] ?? 0) * c.size, 0) /
+        totalRunsAcrossClusters;
+    }
+    return out;
+  }, [clusters, totalRunsAcrossClusters]);
+
+  // For the run-focus comparative annotation: which cluster owns the run,
+  // its mean cost, the run's cost-rank within that cluster.
+  const runContext = useMemo(() => {
+    if (!selectedRunId)
+      return { cluster: undefined, mean: null, rank: null } as {
+        cluster: ClusterSummary | undefined;
+        mean: number | null;
+        rank: { rank: number; size: number } | null;
+      };
+    const owner = clusters.find((c) =>
+      c.memberRunIds.includes(selectedRunId),
+    );
+    if (!owner) return { cluster: undefined, mean: null, rank: null };
+    const costs = owner.memberRunIds
+      .map((rid) => runsById.get(rid)?.totalCostUsd ?? 0)
+      .filter((x) => x > 0);
+    const mean = costs.length > 0 ? costs.reduce((a, b) => a + b, 0) / costs.length : null;
+    const sortedDesc = [...owner.memberRunIds].sort(
+      (a, b) =>
+        (runsById.get(b)?.totalCostUsd ?? 0) -
+        (runsById.get(a)?.totalCostUsd ?? 0),
+    );
+    const idx = sortedDesc.indexOf(selectedRunId);
+    return {
+      cluster: owner,
+      mean,
+      rank: idx >= 0 ? { rank: idx + 1, size: owner.memberRunIds.length } : null,
+    };
+  }, [selectedRunId, clusters, runsById]);
 
   const handleRowClick = (sectionTitle: string, label: string) => {
     if (sectionTitle === "Clusters") {
@@ -315,36 +594,40 @@ export function Routes() {
           title={`Run ${runState.data.runId.replace(/^runograph-50-/, "")}`}
           subtitle={`${runState.data.model} · ${runState.data.outcome}`}
           metrics={runState.data.metrics}
+          baseline={baselineMetrics}
         />
       );
     }
     if (view.kind === "cluster" && activeCluster) {
+      const mix = outcomeMixFor(activeCluster, runsById);
+      const parts = [`${activeCluster.size} runs`];
+      if (mix.total > 0 && runsById.size > 0) {
+        parts.push(`${mix.pass} pass`);
+        if (mix.fail > 0) parts.push(`${mix.fail} fail`);
+        if (mix.error > 0) parts.push(`${mix.error} err`);
+      }
       return (
         <RouteMetrics
-          title={
-            activeCluster.clusterId === 0
-              ? "No-route family"
-              : `Cluster ${activeCluster.clusterId}`
-          }
-          subtitle={`${activeCluster.size} runs · means across cluster`}
+          title={clusterLabel(activeCluster)}
+          subtitle={parts.join(" · ")}
           metrics={activeCluster.metrics}
+          baseline={baselineMetrics}
         />
       );
     }
     if (clustersState.status === "ready") {
-      // Aggregate metrics: mean of cluster means (acknowledged rough)
-      const all = clustersState.data.clusters;
-      const sample = all[0]?.metrics ?? {};
-      const avg: Record<string, number> = {};
-      for (const k of Object.keys(sample)) {
-        const vals = all.map((c) => c.metrics[k] ?? 0);
-        avg[k] = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : 0;
-      }
+      const passCount = runs.reduce(
+        (n, r) => (r.outcome === "pass" ? n + 1 : n),
+        0,
+      );
+      const subtitleParts = [`${totalRunsAcrossClusters} runs`];
+      if (runs.length > 0) subtitleParts.push(`${passCount} pass`);
+      subtitleParts.push("size-weighted");
       return (
         <RouteMetrics
           title="Experiment overview"
-          subtitle={`${DEFAULT_EXPERIMENT} · cross-cluster mean`}
-          metrics={avg}
+          subtitle={subtitleParts.join(" · ")}
+          metrics={baselineMetrics}
         />
       );
     }
@@ -396,26 +679,58 @@ export function Routes() {
               {clustersState.error}
             </div>
           ) : view.kind === "overview" ? (
-            <div className="grid grid-cols-3 gap-3">
-              {clustersState.data.clusters.map((c) => (
-                <ClusterCard
-                  key={c.clusterId}
-                  cluster={c}
-                  onSelect={() => {
-                    setSelectedClusterId(c.clusterId);
-                    setSelectedRunId(null);
-                  }}
-                />
-              ))}
-            </div>
+            (() => {
+              const sortedClusters = sortClustersForLeftPane(
+                clustersState.data.clusters,
+              );
+              const maxSize = sortedClusters.reduce(
+                (m, c) => (c.size > m ? c.size : m),
+                1,
+              );
+              return (
+                <div className="grid grid-cols-6 gap-3 auto-rows-min">
+                  {sortedClusters.map((c) => {
+                    // Area ∝ size → side ∝ sqrt(size). Map to 1..6 cols.
+                    const span = Math.max(
+                      2,
+                      Math.min(
+                        6,
+                        Math.round(
+                          (Math.sqrt(c.size) / Math.sqrt(maxSize)) * 6,
+                        ),
+                      ),
+                    );
+                    return (
+                      <ClusterCard
+                        key={c.clusterId}
+                        cluster={c}
+                        gridSpan={span}
+                        outcomeMix={
+                          runsById.size > 0 ? outcomeMixFor(c, runsById) : null
+                        }
+                        onSelect={() => {
+                          setSelectedClusterId(c.clusterId);
+                          setSelectedRunId(null);
+                        }}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            })()
           ) : view.kind === "cluster" && activeCluster ? (
             <ClusterFocus
               cluster={activeCluster}
               onRunSelect={(rid) => setSelectedRunId(rid)}
+              runsById={runsById}
             />
           ) : view.kind === "run" && runState.status === "ready" ? (
             <RunFocus
               run={runState.data}
+              summary={runsById.get(runState.data.runId)}
+              cluster={runContext.cluster}
+              clusterCostMean={runContext.mean}
+              costRank={runContext.rank}
               onBack={() => setSelectedRunId(null)}
             />
           ) : runState.status === "loading" ? (
