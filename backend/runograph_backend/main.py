@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .api.v1.editor import router as editor_router
 from .api.v1.heatmap import router as heatmap_router
+from .api.v1.routes import router as routes_router
 from .api.v1.runs import router as runs_router
 from .api.v1.solver_grid import router as solver_grid_router
 from .api.v1.stagetree import router as stagetree_router
@@ -55,6 +56,7 @@ app.include_router(heatmap_router)
 app.include_router(stagetree_router)
 app.include_router(editor_router)
 app.include_router(runs_router)
+app.include_router(routes_router)
 
 
 @app.get("/healthz")
