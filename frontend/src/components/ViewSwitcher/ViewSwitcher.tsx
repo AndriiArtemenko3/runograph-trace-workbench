@@ -11,7 +11,7 @@ import clsx from "clsx";
  * Bit-locked to Figma canon in page \"03 Solver Grid v2\" top-bar IA.
  */
 
-export type SolverView = "matrix" | "heatmap" | "stagetree" | "editor";
+export type SolverView = "matrix" | "heatmap" | "stagetree" | "editor" | "routes";
 
 export interface ViewSwitcherProps {
   active: SolverView;
@@ -24,6 +24,7 @@ const VIEWS: { id: SolverView; label: string }[] = [
   { id: "heatmap", label: "Heat-map" },
   { id: "stagetree", label: "Stage-tree" },
   { id: "editor", label: "Editor" },
+  { id: "routes", label: "Routes" },
 ];
 
 export function ViewSwitcher({ active, onSelect, className }: ViewSwitcherProps) {

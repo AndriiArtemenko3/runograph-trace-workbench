@@ -2,6 +2,7 @@ import { SolverGrid } from "./pages/SolverGrid";
 import { HeatMap } from "./pages/HeatMap";
 import { StageTree } from "./pages/StageTree";
 import { Editor } from "./pages/Editor";
+import { Routes } from "./pages/Routes";
 import { useHashRoute } from "./router";
 
 /**
@@ -20,6 +21,8 @@ export default function App() {
       return <StageTree />;
     case "editor":
       return <Editor />;
+    case "routes":
+      return <Routes />;
     case "matrix":
     default:
       return <SolverGrid />;

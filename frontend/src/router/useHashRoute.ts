@@ -8,6 +8,7 @@ const ROUTES: Record<string, SolverView> = {
   "#/heatmap": "heatmap",
   "#/stagetree": "stagetree",
   "#/editor": "editor",
+  "#/routes": "routes",
 };
 
 const PATH_BY_VIEW: Record<SolverView, string> = {
@@ -15,6 +16,7 @@ const PATH_BY_VIEW: Record<SolverView, string> = {
   heatmap: "#/heatmap",
   stagetree: "#/stagetree",
   editor: "#/editor",
+  routes: "#/routes",
 };
 
 function parseHash(): SolverView {
