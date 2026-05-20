@@ -1,16 +1,19 @@
-"""Run N Claude Code invocations against one SWE-bench-Lite task.
+"""Run N Gemini-agent invocations against one SWE-bench-Lite task.
+
+Architecture pivoted 2026-05-20 from Claude Code subprocess (blocked by
+subscription auth wall) to native Gemini API + local function-calling loop.
 
 Per the locked plan at ~/.claude/plans/let-s-do-claude-first-nested-puppy.md:
-- 50 runs × pylint-dev__pylint-7993 × sonnet-4-6 (default)
-- Per run: clone repo at base_commit, write hooks-emitting settings.json,
-  invoke `claude -p`, grade, ingest into SQLite.
+- 50 runs × pylint-dev__pylint-7993 × gemini-2.5-pro (production)
+- gemini-2.5-flash for dry-run verification (~10× cheaper)
+- Per run: clone repo at base_commit, run agent loop, grade, ingest into SQLite.
 - Resumable: skips runs whose meta.json shows status: complete.
-- Pre-flight: `--probe` runs the cheapest auth probe; `--limit N` caps runs.
+- --probe: cheapest auth probe; --limit N caps runs; --parallel N concurrency.
 
 Usage:
   uv run python -m scripts.run_experiment --probe
-  uv run python -m scripts.run_experiment --task pylint-dev__pylint-7993 --limit 1
-  uv run python -m scripts.run_experiment --task pylint-dev__pylint-7993 --n 50
+  uv run python -m scripts.run_experiment --task pylint-dev__pylint-7993 --model gemini-2.5-flash --limit 1
+  uv run python -m scripts.run_experiment --task pylint-dev__pylint-7993 --model gemini-2.5-pro --n 50 --parallel 5
 """
 
 from __future__ import annotations
@@ -19,23 +22,26 @@ import argparse
 import asyncio
 import json
 import shutil
-import subprocess
 import time
-import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from runograph_backend.harness.claude_runner import CLAUDE_BIN, run_claude
+from runograph_backend.harness.gemini_runner import (
+    PRICING_PER_MTOK,
+    RunnerResult,
+    probe,
+    run_gemini,
+)
 from runograph_backend.harness.grader import grade_run
-from runograph_backend.harness.settings_template import write_settings
 from runograph_backend.harness.task_loader import clone_task_repo, load_task
 from runograph_backend.storage.db import AsyncSessionLocal, init_db
 from runograph_backend.storage.ingest import ingest_run
 
-
 DEFAULT_DATA_DIR = Path.home() / ".runograph" / "runs"
 DEFAULT_EXPERIMENT = "runograph-50"
+DEFAULT_MODEL = "gemini-2.5-flash"
 
 
 def _now_iso() -> str:
@@ -55,25 +61,18 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text())
 
 
-def probe_auth() -> int:
-    """One cheap call to confirm `claude` is on PATH + sonnet-4-6 is reachable."""
-    print(f"pre-flight: claude binary at {CLAUDE_BIN}")
-    cmd = [CLAUDE_BIN, "-p", "Reply with the single word OK", "--model", "claude-sonnet-4-6", "--output-format", "json"]
-    print("pre-flight: running", " ".join(cmd))
-    t0 = time.monotonic()
-    res = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    elapsed = time.monotonic() - t0
-    if res.returncode != 0:
-        print(f"pre-flight FAILED in {elapsed:.1f}s (exit {res.returncode}):\nstderr: {res.stderr[:500]}")
-        return res.returncode
-    try:
-        payload = json.loads(res.stdout)
-    except json.JSONDecodeError:
-        print(f"pre-flight: unexpected stdout (non-JSON): {res.stdout[:200]}")
-        return 2
-    reply = (payload.get("result") or "").strip()
-    cost = float(payload.get("total_cost_usd") or 0.0)
-    print(f"pre-flight OK in {elapsed:.1f}s — model replied {reply!r} — cost ${cost:.4f}")
+def probe_auth(model: str) -> int:
+    """Cheap one-shot probe — confirms API key + model are reachable."""
+    print(f"pre-flight: probing {model} …")
+    result = probe(model)
+    if not result.success:
+        print(f"pre-flight FAILED in {result.duration_seconds:.1f}s: {result.error}")
+        return 1
+    print(
+        f"pre-flight OK in {result.duration_seconds:.1f}s · "
+        f"model replied {result.final_text!r} · "
+        f"{result.total_tokens} tokens · ${result.total_cost_usd:.5f}"
+    )
     return 0
 
 
@@ -89,6 +88,7 @@ def execute_one_run(
     task_instance_id: str,
     experiment_id: str,
     model: str,
+    max_turns: int,
     timeout_seconds: int,
 ) -> dict[str, Any]:
     """Execute a single run end-to-end. Returns the meta.json payload."""
@@ -104,32 +104,23 @@ def execute_one_run(
 
     print(f"[{run_id}] cloning {task.repo} @ {task.base_commit[:10]}")
     repo_dir = clone_task_repo(task, run_dir)
-    settings_path = write_settings(repo_dir)
 
-    prompt = (
-        f"You're fixing a bug in this Python repo (already checked out at "
-        f"the buggy commit). The problem statement follows verbatim — read "
-        f"the code, edit the file(s) that need fixing, and make sure your "
-        f"patch is consistent with the existing style.\n\n"
-        f"--- BUG REPORT ---\n{task.problem_statement}\n--- END ---\n\n"
-        f"Do not run pytest yourself — the harness will grade after you finish. "
-        f"Stop as soon as you've made the edits."
-    )
-
-    print(f"[{run_id}] launching claude (model={model}, timeout={timeout_seconds}s)")
-    t0 = time.monotonic()
-    result = run_claude(
+    print(f"[{run_id}] launching gemini (model={model}, max_turns={max_turns})")
+    result: RunnerResult = run_gemini(
         repo_dir=repo_dir,
-        prompt=prompt,
+        problem_statement=task.problem_statement,
         events_path=events_path,
         stream_path=stream_path,
         model=model,
-        timeout_seconds=timeout_seconds,
+        max_turns=max_turns,
+        max_bash_seconds=timeout_seconds,
     )
-    elapsed = time.monotonic() - t0
+
     print(
-        f"[{run_id}] claude exited rc={result.return_code} in {elapsed:.1f}s · "
-        f"{result.total_tokens} tokens · ${result.total_cost_usd:.4f}"
+        f"[{run_id}] gemini finished in {result.duration_seconds:.1f}s · "
+        f"turns={result.turn_count} · tool_calls={result.function_call_count} · "
+        f"{result.total_tokens} tok · ${result.total_cost_usd:.5f}"
+        + (f" · ERROR={result.error}" if result.error else "")
     )
 
     grade = grade_run(repo_dir)
@@ -142,16 +133,23 @@ def execute_one_run(
         "model": model,
         "startedAt": started_at,
         "endedAt": ended_at,
-        "outcome": grade.outcome if result.return_code == 0 else "error",
+        "outcome": grade.outcome if result.success else "error",
         "totalTokens": result.total_tokens,
         "totalCostUsd": result.total_cost_usd,
         "experimentId": experiment_id,
         "settingsHash": None,
         "status": "complete",
-        "claudeReturnCode": result.return_code,
-        "claudeFinalText": result.final_text[:1000],
+        "agentSuccess": result.success,
+        "finishedViaTool": result.finished_via_tool,
+        "finishReason": result.finish_reason,
+        "turnCount": result.turn_count,
+        "functionCallCount": result.function_call_count,
+        "inputTokens": result.total_input_tokens,
+        "outputTokens": result.total_output_tokens,
+        "thoughtsTokens": result.total_thoughts_tokens,
+        "agentError": result.error,
+        "finalText": result.final_text[:1000],
         "diffLines": grade.diff_lines,
-        "settingsPath": str(settings_path),
     }
     _write_json(meta_path, meta)
 
@@ -162,6 +160,28 @@ def execute_one_run(
     return meta
 
 
+def _execute_one_safe(**kwargs) -> dict[str, Any]:
+    """Wrap execute_one_run for parallel use; catches exceptions per-run."""
+    run_dir = kwargs["run_dir"]
+    run_id = run_dir.name
+    try:
+        return execute_one_run(**kwargs)
+    except Exception as e:  # noqa: BLE001
+        print(f"[{run_id}] EXCEPTION: {e!r}")
+        meta = {
+            "runId": run_id,
+            "taskId": kwargs["task_instance_id"],
+            "model": kwargs["model"],
+            "experimentId": kwargs["experiment_id"],
+            "status": "error",
+            "errorMessage": repr(e)[:500],
+            "totalTokens": 0,
+            "totalCostUsd": 0.0,
+        }
+        _write_json(run_dir / "meta.json", meta)
+        return meta
+
+
 def execute_experiment(
     *,
     task_instance_id: str,
@@ -170,6 +190,8 @@ def execute_experiment(
     model: str,
     data_dir: Path,
     timeout_seconds: int,
+    max_turns: int,
+    parallel: int,
 ) -> dict[str, Any]:
     """Run n_runs end-to-end. Resumable: skips runs with status:complete."""
     exp_dir = data_dir / experiment_id
@@ -198,38 +220,29 @@ def execute_experiment(
     total_cost = sum(float(e.get("totalCostUsd") or 0) for e in manifest["runs"])
     total_tokens = sum(int(e.get("totalTokens") or 0) for e in manifest["runs"])
 
+    # Build the list of run-jobs that still need work
+    pending: list[dict[str, Any]] = []
     for idx in range(1, n_runs + 1):
         run_id = _run_id(experiment_id, idx)
         run_dir = runs_dir / run_id
         if run_id in completed_ids:
             print(f"[{run_id}] already complete · skipping")
             continue
-
         if run_dir.exists():
             shutil.rmtree(run_dir)
-
-        try:
-            meta = execute_one_run(
-                run_dir=run_dir,
-                task_instance_id=task_instance_id,
-                experiment_id=experiment_id,
-                model=model,
-                timeout_seconds=timeout_seconds,
-            )
-        except Exception as e:  # noqa: BLE001 — orchestrator must keep going
-            print(f"[{run_id}] EXCEPTION: {e!r}")
-            meta = {
-                "runId": run_id,
-                "taskId": task_instance_id,
+        pending.append(
+            {
+                "run_dir": run_dir,
+                "task_instance_id": task_instance_id,
+                "experiment_id": experiment_id,
                 "model": model,
-                "experimentId": experiment_id,
-                "status": "error",
-                "errorMessage": repr(e)[:500],
-                "totalTokens": 0,
-                "totalCostUsd": 0.0,
+                "max_turns": max_turns,
+                "timeout_seconds": timeout_seconds,
             }
-            _write_json(run_dir / "meta.json", meta)
+        )
 
+    def _record_meta(meta: dict[str, Any]) -> None:
+        nonlocal total_cost, total_tokens
         manifest["runs"].append(meta)
         total_cost += float(meta.get("totalCostUsd") or 0)
         total_tokens += int(meta.get("totalTokens") or 0)
@@ -237,34 +250,52 @@ def execute_experiment(
         manifest["updatedAt"] = _now_iso()
         _write_json(manifest_path, manifest)
         print(
-            f"manifest updated · {len(manifest['runs'])}/{manifest['targetRuns']} runs · "
-            f"running total ${total_cost:.3f} / {total_tokens} tokens"
+            f"manifest · {len(manifest['runs'])}/{manifest['targetRuns']} runs · "
+            f"running total ${total_cost:.4f} / {total_tokens} tok"
         )
+
+    if parallel <= 1:
+        for kwargs in pending:
+            _record_meta(_execute_one_safe(**kwargs))
+    else:
+        # Parallel execution. Each run clones its own repo dir, so isolated.
+        # Gemini API calls are I/O-bound — threads are fine.
+        with ThreadPoolExecutor(max_workers=parallel) as pool:
+            futures = {pool.submit(_execute_one_safe, **kwargs): kwargs for kwargs in pending}
+            for fut in as_completed(futures):
+                _record_meta(fut.result())
 
     return manifest
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run the 50-run Claude Code experiment.")
+    parser = argparse.ArgumentParser(description="Run the 50-run Gemini-agent experiment.")
     parser.add_argument("--probe", action="store_true", help="Cheap auth probe only — no full run")
     parser.add_argument("--task", default="pylint-dev__pylint-7993")
     parser.add_argument("--experiment", default=DEFAULT_EXPERIMENT)
-    parser.add_argument("--model", default="claude-sonnet-4-6")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Gemini model (default {DEFAULT_MODEL}). Known: {', '.join(PRICING_PER_MTOK)}",
+    )
     parser.add_argument("--n", type=int, default=50, help="Target run count")
     parser.add_argument("--limit", type=int, default=None, help="Cap actual runs (for dry-run smoke)")
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
-    parser.add_argument("--timeout", type=int, default=600, help="Per-run timeout (seconds)")
+    parser.add_argument("--timeout", type=int, default=120, help="Per-bash-call timeout (seconds)")
+    parser.add_argument("--max-turns", type=int, default=40, help="Cap on agent loop turns per run")
+    parser.add_argument("--parallel", type=int, default=1, help="Concurrent runs (default 1)")
     args = parser.parse_args()
 
     if args.probe:
-        return probe_auth()
+        return probe_auth(args.model)
 
     n = args.limit if args.limit is not None else args.n
     print(
         f"experiment: {args.experiment} · task: {args.task} · model: {args.model} · "
-        f"target runs: {n} · data dir: {args.data_dir}"
+        f"target runs: {n} · parallel: {args.parallel} · data dir: {args.data_dir}"
     )
 
+    t0 = time.monotonic()
     execute_experiment(
         task_instance_id=args.task,
         n_runs=n,
@@ -272,7 +303,10 @@ def main() -> int:
         model=args.model,
         data_dir=args.data_dir,
         timeout_seconds=args.timeout,
+        max_turns=args.max_turns,
+        parallel=args.parallel,
     )
+    print(f"experiment complete in {time.monotonic() - t0:.1f}s")
     return 0
 
 
