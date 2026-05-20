@@ -218,8 +218,8 @@ async def get_aggregate_route(
 async def get_clusters(
     session: Annotated[AsyncSession, Depends(session_scope)],
     experiment: str = Query(...),
-    k_min: int = Query(3, ge=2, le=10),
-    k_max: int = Query(5, ge=2, le=10),
+    k_min: int = Query(2, ge=2, le=15),
+    k_max: int = Query(12, ge=2, le=15),
 ) -> ClustersResponse:
     if k_max < k_min:
         raise HTTPException(status_code=400, detail="k_max must be >= k_min")
@@ -231,16 +231,24 @@ async def get_clusters(
     events_by_run: dict[str, list[CanonicalEvent]] = {}
     routes_by_run: dict[str, list[str]] = {}
     outcomes_by_run: dict[str, str] = {}
+    features_by_run: dict[str, cluster_mod.RunFeatures] = {}
     for r in runs:
         events = await _load_events_for_run(session, r.id)
         events_by_run[r.id] = events
         routes_by_run[r.id] = rg_mod.route_as_target_sequence(events)
         outcomes_by_run[r.id] = r.outcome
+        if events:
+            features_by_run[r.id] = cluster_mod.RunFeatures(
+                event_types=[e.type for e in events],
+                unique_target_count=len({e.target for e in events if e.target}),
+                outcome=r.outcome,
+                total_tokens=r.total_tokens or 0,
+                total_cost_usd=r.total_cost_usd or 0.0,
+            )
 
-    # Skip runs with empty routes (failed before producing events) from
-    # clustering input; report them separately as a "no-route" cluster_id=0.
-    nonempty = {rid: seq for rid, seq in routes_by_run.items() if seq}
-    cluster_res = cluster_mod.cluster_routes(nonempty, k_range=(k_min, k_max))
+    # Skip runs with empty traces from clustering input; report them separately
+    # as a "no-route" cluster_id=0.
+    cluster_res = cluster_mod.cluster_routes(features_by_run, k_range=(k_min, k_max))
 
     # Group runs by cluster
     members: dict[int, list[str]] = {}
