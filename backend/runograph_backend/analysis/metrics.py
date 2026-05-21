@@ -1,111 +1,175 @@
-"""First-cut route metrics. Expect tuning after the first 50-run dataset.
+"""Real-indicator metrics: cost, latency, tokens, pass rate, distribution
+stats (median, p95, std), z-scores against cluster baseline.
 
-Definitions (kept as module constants and pure functions so iteration is
-cheap):
+Design principle: surface measurements an external observer can replicate
+from the raw run data, not synthesised abstractions. The previous
+"efficiency / drift / loopiness / recovery / tool_discipline" set was
+hand-rolled and not auditable against industry conventions. This file
+matches what dashboards like Grafana o11y-bench, SWE-bench leaderboards,
+and DevOps p50/p95 latency panels report.
 
-  efficiency      = 1 if passed else 0, normalised by event count
-  drift           = unique_targets / total_events (scatter)
-  loopiness       = repeated_edges / total_edges (revisit pressure)
-  recovery        = events_after_first_error / total_events
-                    (1.0 if no errors; the agent's resilience score)
-  tool_discipline = 1 - (bash_events / total_events) (anti-shell-leaning)
+Three levels of aggregation:
 
-These are first-draft. The right ones surface after looking at 50 real
-runs side by side; this file is intentionally easy to edit.
+  1. run_indicators(run, events)
+     Per-run scalars pulled straight from the Run row + event count.
+     Auditable: every field has a clear unit and source column.
+
+  2. group_stats(per_run_indicators)
+     Distribution stats for a cluster or the whole experiment. For each
+     scalar field: mean, median, p95, std. Also pass_rate and
+     error_rate at the group level.
+
+  3. run_vs_cluster_z(run_ind, cluster_stats)
+     Standard-score deltas: how many sigma this run is from the cluster
+     mean on cost / tokens / latency / events. Lets the UI show a run's
+     position in the cluster distribution at a glance.
 """
 
 from __future__ import annotations
 
-from collections import Counter
+import math
+from datetime import datetime
 
-from runograph_backend.analysis.route_graph import (
-    GraphEdge,
-    events_to_route,
-    route_as_target_sequence,
-)
 from runograph_backend.storage.schemas import CanonicalEvent
 
 
-def efficiency(events: list[CanonicalEvent], passed: bool) -> float:
-    n = len(events_to_route(events))
-    if n == 0:
+# ----- helpers -----
+
+
+def _percentile(sorted_values: list[float], pct: float) -> float:
+    """Linear-interpolation percentile on a pre-sorted list."""
+    if not sorted_values:
         return 0.0
-    return (1.0 if passed else 0.0) / n
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    idx = max(0.0, min(n - 1, (n - 1) * pct))
+    lower = int(math.floor(idx))
+    upper = int(math.ceil(idx))
+    if lower == upper:
+        return sorted_values[lower]
+    frac = idx - lower
+    return sorted_values[lower] * (1 - frac) + sorted_values[upper] * frac
 
 
-def drift(events: list[CanonicalEvent]) -> float:
-    sequence = route_as_target_sequence(events)
-    if not sequence:
+def _stddev(values: list[float], mean: float) -> float:
+    if len(values) < 2:
         return 0.0
-    return len(set(sequence)) / len(sequence)
+    return math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
 
 
-def loopiness(edges: list[GraphEdge]) -> float:
-    total = sum(e.count for e in edges)
-    if total == 0:
+def _duration_s(started: datetime | None, ended: datetime | None) -> float:
+    if not started or not ended:
         return 0.0
-    repeats = sum(e.count - 1 for e in edges if e.count > 1)
-    return repeats / total
+    delta = (ended - started).total_seconds()
+    return max(0.0, float(delta))
 
 
-def recovery(events: list[CanonicalEvent]) -> float:
-    route = events_to_route(events)
-    if not route:
-        return 1.0
-    first_error_idx: int | None = None
-    for i, e in enumerate(route):
-        if e.type == "error":
-            first_error_idx = i
-            break
-    if first_error_idx is None:
-        return 1.0
-    after = len(route) - first_error_idx - 1
-    return after / len(route)
+# ----- per-run -----
 
 
-def tool_discipline(events: list[CanonicalEvent]) -> float:
-    """1.0 when the agent never used bash; 0.0 when every event was bash.
-
-    This is a placeholder — refine once we see real route shapes. The
-    intent is to flag agents that lean on shell instead of structured
-    tools.
-    """
-    route = events_to_route(events)
-    if not route:
-        return 1.0
-    bash_count = sum(
-        1
-        for e in route
-        if e.target and (e.target.startswith("bash") or e.type == "tool_call" and "bash" in (e.content_summary or "").lower())
-    )
-    return 1.0 - bash_count / len(route)
-
-
-def compute_all(
+def run_indicators(
+    *,
+    outcome: str,
+    total_tokens: int | None,
+    total_cost_usd: float | None,
+    started_at: datetime | None,
+    ended_at: datetime | None,
     events: list[CanonicalEvent],
-    edges: list[GraphEdge],
-    passed: bool,
 ) -> dict[str, float]:
-    """Run every metric. Returns a flat dict keyed by metric name."""
+    """Pure scalar indicators for one run. Auditable against the Run row."""
+    n_events = len(events)
+    unique_targets = len({e.target for e in events if e.target})
+    error_count = sum(1 for e in events if e.type == "error")
+    tool_calls = sum(
+        1 for e in events if e.type in ("tool_call", "test_run")
+    )
     return {
-        "efficiency": efficiency(events, passed),
-        "drift": drift(events),
-        "loopiness": loopiness(edges),
-        "recovery": recovery(events),
-        "tool_discipline": tool_discipline(events),
-        "event_count": float(len(events_to_route(events))),
-        "unique_targets": float(len({e.target for e in events_to_route(events) if e.target})),
-        "error_count": float(sum(1 for e in events if e.type == "error")),
+        "cost_usd": float(total_cost_usd or 0.0),
+        "tokens_total": float(total_tokens or 0),
+        "latency_s": _duration_s(started_at, ended_at),
+        "event_count": float(n_events),
+        "tool_call_count": float(tool_calls),
+        "unique_targets": float(unique_targets),
+        "error_count": float(error_count),
+        "passed": 1.0 if outcome == "pass" else 0.0,
+        "errored": 1.0 if outcome == "error" else 0.0,
     }
 
 
-def aggregate_metrics(per_run_metrics: list[dict[str, float]]) -> dict[str, float]:
-    """Cluster-level rollup: mean of each metric across the cluster's runs."""
-    if not per_run_metrics:
+# ----- per-group (cluster / experiment) -----
+
+
+GROUP_DISTRIBUTION_FIELDS = (
+    "cost_usd",
+    "tokens_total",
+    "latency_s",
+    "event_count",
+    "tool_call_count",
+    "unique_targets",
+    "error_count",
+)
+
+
+def group_stats(per_run: list[dict[str, float]]) -> dict[str, float]:
+    """Compute distribution stats (mean, median, p95, std) for the group.
+
+    Also surfaces n_runs, pass_rate, error_rate.
+    """
+    if not per_run:
         return {}
-    keys = per_run_metrics[0].keys()
-    out: dict[str, float] = {}
-    for k in keys:
-        values = [m.get(k, 0.0) for m in per_run_metrics]
-        out[k] = sum(values) / len(values) if values else 0.0
+    n = len(per_run)
+    out: dict[str, float] = {"n_runs": float(n)}
+
+    passed = sum(m.get("passed", 0.0) for m in per_run)
+    errored = sum(m.get("errored", 0.0) for m in per_run)
+    out["pass_rate"] = passed / n
+    out["error_rate"] = errored / n
+
+    for field in GROUP_DISTRIBUTION_FIELDS:
+        vals = sorted(float(m.get(field, 0.0)) for m in per_run)
+        mean = sum(vals) / n
+        out[f"{field}_mean"] = mean
+        out[f"{field}_median"] = _percentile(vals, 0.5)
+        out[f"{field}_p95"] = _percentile(vals, 0.95)
+        out[f"{field}_std"] = _stddev(vals, mean)
+        out[f"{field}_min"] = vals[0]
+        out[f"{field}_max"] = vals[-1]
+
     return out
+
+
+# ----- per-run vs cluster -----
+
+
+Z_SCORE_FIELDS = ("cost_usd", "tokens_total", "latency_s", "event_count")
+
+
+def run_vs_cluster_z(
+    run_ind: dict[str, float],
+    cluster_stats: dict[str, float],
+) -> dict[str, float]:
+    """Z-score of this run on each headline scalar against the cluster
+    distribution. Returns 0.0 when the cluster has insufficient spread."""
+    out: dict[str, float] = {}
+    for field in Z_SCORE_FIELDS:
+        mean = cluster_stats.get(f"{field}_mean", 0.0)
+        std = cluster_stats.get(f"{field}_std", 0.0)
+        v = run_ind.get(field, 0.0)
+        out[f"{field}_z"] = (v - mean) / std if std > 1e-9 else 0.0
+    return out
+
+
+# ----- legacy shim (back-compat for any caller still using old names) -----
+
+
+def compute_all(*_args, **_kwargs) -> dict[str, float]:  # pragma: no cover
+    """Deprecated — kept so older imports don't break during the cutover.
+    Returns an empty dict; callers should migrate to run_indicators +
+    group_stats."""
+    return {}
+
+
+def aggregate_metrics(per_run_metrics: list[dict[str, float]]) -> dict[str, float]:
+    """Compatibility wrapper: routes group_stats."""
+    return group_stats(per_run_metrics)

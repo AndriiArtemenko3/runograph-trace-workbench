@@ -41,6 +41,7 @@ export interface ClustersResponse {
   k: number;
   clusters: ClusterSummary[];
   aggregateGraph: RouteGraphData;
+  experimentStats: Record<string, number>;
 }
 
 export interface RouteRunResponse {

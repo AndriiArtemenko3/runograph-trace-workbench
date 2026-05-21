@@ -117,6 +117,7 @@ function sortClustersForLeftPane(clusters: ClusterSummary[]): ClusterSummary[] {
 
 function buildLeftPaneSections(
   clusters: ClusterSummary[],
+  expandedClusterIds: ReadonlySet<number>,
   selectedClusterId: number | null,
   selectedRunId: string | null,
 ): LeftPaneSection[] {
@@ -124,21 +125,27 @@ function buildLeftPaneSections(
   const sections: LeftPaneSection[] = [
     {
       title: "Clusters",
-      rows: sorted.map((c) => ({
-        label: clusterLabel(c),
-        value: `${c.size}`,
-        selected: c.clusterId === selectedClusterId,
-      })),
+      rows: sorted.map((c) => {
+        const expanded = expandedClusterIds.has(c.clusterId);
+        return {
+          label: clusterLabel(c),
+          // Caret hints the row toggles expansion (▾ open, ▸ closed).
+          value: `${c.size} ${expanded ? "▾" : "▸"}`,
+          selected: c.clusterId === selectedClusterId,
+        };
+      }),
     },
   ];
 
-  const active = clusters.find((c) => c.clusterId === selectedClusterId);
-  if (active) {
+  // Append one runs sub-section per expanded cluster (in display order).
+  for (const c of sorted) {
+    if (!expandedClusterIds.has(c.clusterId)) continue;
+    if (c.memberRunIds.length === 0) continue;
     sections.push({
-      title: `${clusterLabel(active)} runs`,
-      rows: active.memberRunIds.map((rid) => ({
+      title: `${clusterLabel(c)} runs`,
+      rows: c.memberRunIds.map((rid) => ({
         label: rid.replace(/^runograph-50-/, ""),
-        value: rid === active.representativeRunId ? "rep" : "",
+        value: rid === c.representativeRunId ? "rep" : "",
         selected: rid === selectedRunId,
       })),
     });
@@ -149,12 +156,10 @@ function buildLeftPaneSections(
 function ClusterCard({
   cluster,
   onSelect,
-  gridSpan,
   outcomeMix,
 }: {
   cluster: ClusterSummary;
   onSelect: () => void;
-  gridSpan: number;
   outcomeMix: OutcomeMix | null;
 }) {
   const isEmpty = cluster.representativeGraph.nodes.length === 0;
@@ -171,7 +176,6 @@ function ClusterCard({
         "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-primary",
       )}
       data-cluster={cluster.clusterId}
-      style={{ gridColumn: `span ${gridSpan} / span ${gridSpan}` }}
     >
       <header className="flex items-baseline justify-between">
         <h3 className="font-sans text-sm font-medium text-text-primary">
@@ -229,8 +233,8 @@ function ClusterCard({
           <RouteGraph
             nodes={cluster.representativeGraph.nodes}
             edges={cluster.representativeGraph.edges}
-            width={gridSpan >= 4 ? 540 : 260}
-            height={gridSpan >= 4 ? 200 : 160}
+            width={300}
+            height={180}
           />
         )}
       </div>
@@ -491,6 +495,9 @@ function buildBottomBarEntries(
 export function Routes() {
   const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [expandedClusterIds, setExpandedClusterIds] = useState<Set<number>>(
+    () => new Set(),
+  );
 
   const clustersState = useRouteClusters(DEFAULT_EXPERIMENT);
   const runsListState = useRunsList(DEFAULT_EXPERIMENT);
@@ -521,27 +528,25 @@ export function Routes() {
   }, [runs]);
 
   const activeCluster = clusters.find((c) => c.clusterId === selectedClusterId);
-  const sections = buildLeftPaneSections(clusters, selectedClusterId, selectedRunId);
+  const sections = buildLeftPaneSections(
+    clusters,
+    expandedClusterIds,
+    selectedClusterId,
+    selectedRunId,
+  );
   const bottomEntries = buildBottomBarEntries(
     clustersState.status === "ready" ? clustersState.data : null,
     runs,
   );
 
-  // Size-weighted experiment baseline across cluster.metrics for the
-  // overview metrics card and the per-cluster baseline marker.
+  // Experiment-wide group_stats — distribution stats over every run with
+  // a captured trace. Driven by the backend so the numbers are auditable
+  // against the SQLite row set rather than a frontend-side approximation.
   const totalRunsAcrossClusters = clusters.reduce((a, c) => a + c.size, 0);
-  const baselineMetrics = useMemo(() => {
-    const out: Record<string, number> = {};
-    const first = clusters[0];
-    if (!first || totalRunsAcrossClusters === 0) return out;
-    const keys = Object.keys(first.metrics);
-    for (const k of keys) {
-      out[k] =
-        clusters.reduce((a, c) => a + (c.metrics[k] ?? 0) * c.size, 0) /
-        totalRunsAcrossClusters;
-    }
-    return out;
-  }, [clusters, totalRunsAcrossClusters]);
+  const experimentStats: Record<string, number> = useMemo(() => {
+    if (clustersState.status !== "ready") return {};
+    return clustersState.data.experimentStats ?? {};
+  }, [clustersState]);
 
   // For the run-focus comparative annotation: which cluster owns the run,
   // its mean cost, the run's cost-rank within that cluster.
@@ -575,12 +580,19 @@ export function Routes() {
 
   const handleRowClick = (sectionTitle: string, label: string) => {
     if (sectionTitle === "Clusters") {
+      // Toggle expansion only — never auto-navigate. The user opens a
+      // cluster's focus view by clicking the corresponding card in the
+      // centre pane; the LeftPane is for inspection in place.
       const cid =
         label === "No-route"
           ? 0
           : parseInt(label.replace(/^Cluster\s+/, ""), 10);
-      setSelectedClusterId(cid);
-      setSelectedRunId(null);
+      setExpandedClusterIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(cid)) next.delete(cid);
+        else next.add(cid);
+        return next;
+      });
     } else {
       // Member runs section — label is the abbreviated run id
       setSelectedRunId(`runograph-50-${label}`);
@@ -589,12 +601,21 @@ export function Routes() {
 
   const rightPane = (() => {
     if (view.kind === "run" && runState.status === "ready") {
+      // Run-mode metrics: baseline is the owning cluster's group_stats so
+      // the z-score badges read against the local distribution, not the
+      // whole experiment.
+      const owner = runContext.cluster;
+      const subtitleParts = [runState.data.model, runState.data.outcome];
+      if (owner) {
+        subtitleParts.push(`in ${clusterLabel(owner)}`);
+      }
       return (
         <RouteMetrics
+          mode="run"
           title={`Run ${runState.data.runId.replace(/^runograph-50-/, "")}`}
-          subtitle={`${runState.data.model} · ${runState.data.outcome}`}
+          subtitle={subtitleParts.join(" · ")}
           metrics={runState.data.metrics}
-          baseline={baselineMetrics}
+          baseline={owner?.metrics}
         />
       );
     }
@@ -608,10 +629,11 @@ export function Routes() {
       }
       return (
         <RouteMetrics
+          mode="group"
           title={clusterLabel(activeCluster)}
           subtitle={parts.join(" · ")}
           metrics={activeCluster.metrics}
-          baseline={baselineMetrics}
+          baseline={experimentStats}
         />
       );
     }
@@ -622,12 +644,12 @@ export function Routes() {
       );
       const subtitleParts = [`${totalRunsAcrossClusters} runs`];
       if (runs.length > 0) subtitleParts.push(`${passCount} pass`);
-      subtitleParts.push("size-weighted");
       return (
         <RouteMetrics
+          mode="group"
           title="Experiment overview"
           subtitle={subtitleParts.join(" · ")}
-          metrics={baselineMetrics}
+          metrics={experimentStats}
         />
       );
     }
@@ -683,38 +705,21 @@ export function Routes() {
               const sortedClusters = sortClustersForLeftPane(
                 clustersState.data.clusters,
               );
-              const maxSize = sortedClusters.reduce(
-                (m, c) => (c.size > m ? c.size : m),
-                1,
-              );
               return (
-                <div className="grid grid-cols-6 gap-3 auto-rows-min">
-                  {sortedClusters.map((c) => {
-                    // Area ∝ size → side ∝ sqrt(size). Map to 1..6 cols.
-                    const span = Math.max(
-                      2,
-                      Math.min(
-                        6,
-                        Math.round(
-                          (Math.sqrt(c.size) / Math.sqrt(maxSize)) * 6,
-                        ),
-                      ),
-                    );
-                    return (
-                      <ClusterCard
-                        key={c.clusterId}
-                        cluster={c}
-                        gridSpan={span}
-                        outcomeMix={
-                          runsById.size > 0 ? outcomeMixFor(c, runsById) : null
-                        }
-                        onSelect={() => {
-                          setSelectedClusterId(c.clusterId);
-                          setSelectedRunId(null);
-                        }}
-                      />
-                    );
-                  })}
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 auto-rows-min">
+                  {sortedClusters.map((c) => (
+                    <ClusterCard
+                      key={c.clusterId}
+                      cluster={c}
+                      outcomeMix={
+                        runsById.size > 0 ? outcomeMixFor(c, runsById) : null
+                      }
+                      onSelect={() => {
+                        setSelectedClusterId(c.clusterId);
+                        setSelectedRunId(null);
+                      }}
+                    />
+                  ))}
                 </div>
               );
             })()

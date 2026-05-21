@@ -1,73 +1,273 @@
 import clsx from "clsx";
 
 /**
- * Right-pane metrics card. Renders the 5 first-cut route metrics
- * (efficiency / drift / loopiness / recovery / tool-discipline) plus
- * a small "footnotes" row with event_count, unique_targets, error_count.
+ * Real-indicator metrics panel.
  *
- * Polarity colouring is hand-set per metric: higher efficiency / recovery
- * / tool-discipline is good; higher drift / loopiness / error_count is
- * worse. Mid-range stays neutral.
+ * Two rendering modes driven by `mode`:
+ *
+ *   "group"  — cluster or experiment overview. For each scalar field,
+ *              renders MEDIAN as the dominant glyph + p95 and σ inline.
+ *              Surfaces pass_rate, error_rate, n_runs.
+ *
+ *   "run"    — single-run inspector. Renders the scalar values + a
+ *              ±σ z-score badge against the optional `baseline` (typically
+ *              the owning cluster's group_stats).
+ *
+ * The backend metric contract is documented in
+ * runograph_backend/analysis/metrics.py. Keys this component reads:
+ *
+ *   group mode keys: n_runs, pass_rate, error_rate, <field>_median,
+ *                    <field>_p95, <field>_std, <field>_mean.
+ *
+ *   run mode keys:   cost_usd, tokens_total, latency_s, event_count,
+ *                    tool_call_count, unique_targets, error_count.
+ *
+ * The visual goal is replicable indicators only — no synthesised
+ * abstractions. Every number on screen is auditable against the Run
+ * row + event table.
  */
-
-const METRIC_ORDER: { key: string; label: string; polarity: "up" | "down" | "neutral" }[] = [
-  { key: "efficiency", label: "Efficiency", polarity: "up" },
-  { key: "drift", label: "Drift", polarity: "down" },
-  { key: "loopiness", label: "Loopiness", polarity: "down" },
-  { key: "recovery", label: "Recovery", polarity: "up" },
-  { key: "tool_discipline", label: "Tool discipline", polarity: "up" },
-];
-
-const FOOTNOTE_ORDER: { key: string; label: string }[] = [
-  { key: "event_count", label: "Events" },
-  { key: "unique_targets", label: "Unique targets" },
-  { key: "error_count", label: "Errors" },
-];
-
-function format(value: number, decimals = 3): string {
-  if (Number.isInteger(value)) return value.toString();
-  if (Math.abs(value) < 0.0001) return "0";
-  return value.toFixed(decimals);
-}
-
-function toneFor(
-  value: number,
-  polarity: "up" | "down" | "neutral",
-): string {
-  if (polarity === "neutral") return "text-text-primary";
-  if (value === 0 || Number.isNaN(value)) return "text-text-tertiary";
-  if (polarity === "up") {
-    if (value > 0.5) return "text-status-success";
-    if (value > 0.2) return "text-text-primary";
-    return "text-status-danger";
-  }
-  // polarity === "down"
-  if (value > 0.5) return "text-status-danger";
-  if (value > 0.2) return "text-text-primary";
-  return "text-status-success";
-}
 
 export interface RouteMetricsProps {
   title: string;
   subtitle?: string;
+  mode: "group" | "run";
   metrics: Record<string, number>;
-  /** Experiment-wide reference values (e.g. size-weighted mean across
-   *  clusters). When provided, each metric row gets a 3-px bar showing the
-   *  current value on a 0..1 axis with a baseline marker. */
+  /** For group mode: experiment-wide baseline (delta vs experiment).
+   *  For run mode: owning-cluster group_stats (drives z-scores). */
   baseline?: Record<string, number>;
   className?: string;
 }
 
-function clamp01(x: number): number {
-  if (!Number.isFinite(x)) return 0;
-  if (x < 0) return 0;
-  if (x > 1) return 1;
-  return x;
+// ----- helpers -----
+
+const SECONDS_IN_MIN = 60;
+
+function formatCost(usd: number): string {
+  if (!Number.isFinite(usd) || usd <= 0) return "$0";
+  if (usd < 0.0095) return `$${usd.toFixed(4)}`;
+  if (usd < 1) return `$${usd.toFixed(3)}`;
+  return `$${usd.toFixed(2)}`;
 }
+
+function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return Math.round(n).toString();
+}
+
+function formatLatency(s: number): string {
+  if (!Number.isFinite(s) || s <= 0) return "—";
+  if (s < SECONDS_IN_MIN) return `${s.toFixed(s < 10 ? 1 : 0)}s`;
+  const m = Math.floor(s / SECONDS_IN_MIN);
+  const rem = Math.round(s - m * SECONDS_IN_MIN);
+  return `${m}m${rem.toString().padStart(2, "0")}s`;
+}
+
+function formatInt(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return Math.round(n).toString();
+}
+
+function formatPct(fraction: number): string {
+  if (!Number.isFinite(fraction)) return "0%";
+  return `${Math.round(fraction * 100)}%`;
+}
+
+function zScore(value: number, baselineMean: number, baselineStd: number): number | null {
+  if (!Number.isFinite(value) || !Number.isFinite(baselineMean)) return null;
+  if (!Number.isFinite(baselineStd) || baselineStd < 1e-9) return null;
+  return (value - baselineMean) / baselineStd;
+}
+
+function zClass(z: number, polarity: "lower-better" | "higher-better"): string {
+  const sign = polarity === "lower-better" ? -1 : 1;
+  const direction = z * sign;
+  if (direction > 1) return "text-status-success";
+  if (direction < -1) return "text-status-danger";
+  return "text-text-tertiary";
+}
+
+function formatZ(z: number | null): string {
+  if (z == null) return "";
+  if (Math.abs(z) < 0.05) return "≈ μ";
+  const sign = z > 0 ? "+" : "";
+  return `${sign}${z.toFixed(2)}σ`;
+}
+
+// ----- field definitions -----
+
+interface ScalarField {
+  key: string;             // run-mode key (also stem for group-mode "_median" suffix)
+  label: string;
+  format: (v: number) => string;
+  polarity: "lower-better" | "higher-better" | "neutral";
+}
+
+const SCALAR_FIELDS: ScalarField[] = [
+  { key: "cost_usd", label: "Cost", format: formatCost, polarity: "lower-better" },
+  { key: "latency_s", label: "Latency", format: formatLatency, polarity: "lower-better" },
+  { key: "tokens_total", label: "Tokens", format: formatTokens, polarity: "lower-better" },
+  { key: "event_count", label: "Events", format: formatInt, polarity: "neutral" },
+];
+
+const RUN_EXTRA_FIELDS: ScalarField[] = [
+  { key: "unique_targets", label: "Unique targets", format: formatInt, polarity: "neutral" },
+  { key: "tool_call_count", label: "Tool calls", format: formatInt, polarity: "neutral" },
+  { key: "error_count", label: "Errors", format: formatInt, polarity: "lower-better" },
+];
+
+// ----- group-mode renderer -----
+
+function GroupBlock({
+  field,
+  metrics,
+  baseline,
+}: {
+  field: ScalarField;
+  metrics: Record<string, number>;
+  baseline?: Record<string, number>;
+}) {
+  const median = metrics[`${field.key}_median`] ?? 0;
+  const p95 = metrics[`${field.key}_p95`] ?? 0;
+  const std = metrics[`${field.key}_std`] ?? 0;
+
+  // Delta against the experiment-wide baseline median (if baseline is the
+  // experiment overview). Encoded as +/- pct so it reads natively.
+  let deltaText: string | null = null;
+  let deltaClass = "text-text-tertiary";
+  if (baseline && field.key !== "event_count") {
+    const baseMedian = baseline[`${field.key}_median`] ?? 0;
+    if (Number.isFinite(baseMedian) && baseMedian > 0) {
+      const pct = (median - baseMedian) / baseMedian;
+      if (Math.abs(pct) >= 0.02) {
+        deltaText = `${pct > 0 ? "+" : ""}${(pct * 100).toFixed(0)}% vs exp.`;
+        if (field.polarity === "lower-better") {
+          deltaClass = pct < 0 ? "text-status-success" : "text-status-danger";
+        } else if (field.polarity === "higher-better") {
+          deltaClass = pct > 0 ? "text-status-success" : "text-status-danger";
+        }
+      } else {
+        deltaText = "≈ exp.";
+      }
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-baseline justify-between">
+        <span className="text-text-tertiary text-2xs uppercase tracking-wide">
+          {field.label}
+        </span>
+        {deltaText ? (
+          <span className={clsx("font-mono text-2xs tabular-nums", deltaClass)}>
+            {deltaText}
+          </span>
+        ) : null}
+      </div>
+      <div className="font-mono text-base text-text-primary tabular-nums">
+        {field.format(median)}
+        <span className="text-text-tertiary text-2xs ml-1">median</span>
+      </div>
+      <div className="font-mono text-2xs text-text-tertiary tabular-nums">
+        p95 {field.format(p95)} · σ {field.format(std)}
+      </div>
+    </div>
+  );
+}
+
+function GroupHeader({ metrics }: { metrics: Record<string, number> }) {
+  const n = metrics.n_runs ?? 0;
+  const passRate = metrics.pass_rate ?? 0;
+  const errorRate = metrics.error_rate ?? 0;
+  return (
+    <div className="grid grid-cols-3 gap-2 pt-1">
+      <div className="flex flex-col">
+        <span className="text-text-tertiary text-2xs uppercase">Runs</span>
+        <span className="font-mono text-sm text-text-primary tabular-nums">
+          {formatInt(n)}
+        </span>
+      </div>
+      <div className="flex flex-col">
+        <span className="text-text-tertiary text-2xs uppercase">Pass rate</span>
+        <span
+          className={clsx(
+            "font-mono text-sm tabular-nums",
+            passRate >= 0.9
+              ? "text-status-success"
+              : passRate >= 0.5
+                ? "text-text-primary"
+                : "text-status-danger",
+          )}
+        >
+          {formatPct(passRate)}
+        </span>
+      </div>
+      <div className="flex flex-col">
+        <span className="text-text-tertiary text-2xs uppercase">Error rate</span>
+        <span
+          className={clsx(
+            "font-mono text-sm tabular-nums",
+            errorRate <= 0.05
+              ? "text-status-success"
+              : errorRate <= 0.2
+                ? "text-text-primary"
+                : "text-status-danger",
+          )}
+        >
+          {formatPct(errorRate)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ----- run-mode renderer -----
+
+function RunBlock({
+  field,
+  value,
+  baseline,
+}: {
+  field: ScalarField;
+  value: number;
+  baseline?: Record<string, number>;
+}) {
+  let z: number | null = null;
+  if (baseline) {
+    z = zScore(
+      value,
+      baseline[`${field.key}_mean`] ?? NaN,
+      baseline[`${field.key}_std`] ?? NaN,
+    );
+  }
+  const zTxt = formatZ(z);
+  const zCls = z != null && field.polarity !== "neutral" ? zClass(z, field.polarity as "lower-better" | "higher-better") : "text-text-tertiary";
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="flex items-baseline justify-between">
+        <span className="text-text-tertiary text-2xs uppercase tracking-wide">
+          {field.label}
+        </span>
+        {zTxt ? (
+          <span className={clsx("font-mono text-2xs tabular-nums", zCls)}>
+            {zTxt}
+          </span>
+        ) : null}
+      </div>
+      <div className="font-mono text-base text-text-primary tabular-nums">
+        {field.format(value)}
+      </div>
+    </div>
+  );
+}
+
+// ----- component entry -----
 
 export function RouteMetrics({
   title,
   subtitle,
+  mode,
   metrics,
   baseline,
   className,
@@ -76,73 +276,66 @@ export function RouteMetrics({
     <section
       aria-label="Route metrics"
       className={clsx(
-        "rounded-md bg-bg-panel border border-border-hairline p-3 flex flex-col gap-2",
+        "rounded-md bg-bg-panel border border-border-hairline p-3 flex flex-col gap-3",
         className,
       )}
     >
-      <header className="pb-1">
-        <h3 className="text-text-primary font-sans text-sm font-medium">{title}</h3>
+      <header>
+        <h3 className="text-text-primary font-sans text-sm font-medium">
+          {title}
+        </h3>
         {subtitle ? (
           <div className="text-text-tertiary text-2xs font-mono">{subtitle}</div>
         ) : null}
       </header>
-      <dl className="grid grid-cols-2 gap-2 m-0">
-        {METRIC_ORDER.map((m) => {
-          const v = metrics[m.key] ?? 0;
-          const base = baseline?.[m.key];
-          const showBar = base != null && Number.isFinite(base);
-          const valuePct = clamp01(v) * 100;
-          const basePct = showBar ? clamp01(base) * 100 : 0;
-          return (
-            <div key={m.key} className="flex flex-col">
-              <dt className="text-text-tertiary text-2xs uppercase tracking-wide">
-                {m.label}
-              </dt>
-              <dd
-                className={clsx(
-                  "font-mono text-base tabular-nums",
-                  toneFor(v, m.polarity),
-                )}
-              >
-                {format(v)}
-              </dd>
-              {showBar ? (
-                <div
-                  className="relative mt-1 h-[3px] w-full bg-border-subtle rounded-full"
-                  role="img"
-                  aria-label={`${m.label} ${format(v)}, baseline ${format(base)}`}
-                  title={`baseline ${format(base)}`}
-                >
-                  <div
-                    className="absolute inset-y-0 left-0 bg-accent-primary rounded-full"
-                    style={{ width: `${valuePct}%` }}
-                  />
-                  <div
-                    className="absolute -top-[2px] h-[7px] w-[2px] bg-text-secondary"
-                    style={{ left: `calc(${basePct}% - 1px)` }}
-                  />
-                </div>
-              ) : null}
+
+      {mode === "group" ? (
+        <>
+          <GroupHeader metrics={metrics} />
+          <hr className="border-border-subtle border-t" />
+          <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+            {SCALAR_FIELDS.map((f) => (
+              <GroupBlock
+                key={f.key}
+                field={f}
+                metrics={metrics}
+                baseline={baseline}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+            {SCALAR_FIELDS.map((f) => (
+              <RunBlock
+                key={f.key}
+                field={f}
+                value={metrics[f.key] ?? 0}
+                baseline={baseline}
+              />
+            ))}
+          </div>
+          <hr className="border-border-subtle border-t" />
+          <div className="grid grid-cols-3 gap-x-3 gap-y-2">
+            {RUN_EXTRA_FIELDS.map((f) => (
+              <div key={f.key} className="flex flex-col">
+                <span className="text-text-tertiary text-2xs uppercase">
+                  {f.label}
+                </span>
+                <span className="font-mono text-sm text-text-primary tabular-nums">
+                  {f.format(metrics[f.key] ?? 0)}
+                </span>
+              </div>
+            ))}
+          </div>
+          {baseline ? (
+            <div className="text-text-tertiary text-2xs font-mono italic pt-1 border-t border-border-subtle">
+              σ-values compare this run to its cluster's mean (n = {formatInt(baseline.n_runs ?? 0)}).
             </div>
-          );
-        })}
-      </dl>
-      <hr className="border-border-subtle border-t" />
-      <dl className="grid grid-cols-3 gap-2 m-0">
-        {FOOTNOTE_ORDER.map((m) => {
-          const v = metrics[m.key] ?? 0;
-          return (
-            <div key={m.key} className="flex flex-col">
-              <dt className="text-text-tertiary text-2xs uppercase tracking-wide">
-                {m.label}
-              </dt>
-              <dd className="text-text-primary font-mono text-xs tabular-nums">
-                {format(v, 0)}
-              </dd>
-            </div>
-          );
-        })}
-      </dl>
+          ) : null}
+        </>
+      )}
     </section>
   );
 }

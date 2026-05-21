@@ -96,6 +96,10 @@ class ClustersResponse(BaseModel):
     k: int
     clusters: list[ClusterSummary]
     aggregate_graph: GraphOut = Field(..., alias="aggregateGraph")
+    # Experiment-wide group_stats: distribution stats computed over every
+    # run with at least one event. Frontend reads this for the overview
+    # metrics card and for per-cluster baseline deltas.
+    experiment_stats: dict[str, float] = Field(..., alias="experimentStats")
 
     model_config = {"populate_by_name": True}
 
@@ -182,10 +186,13 @@ async def get_run_route(
 
     events = await _load_events_for_run(session, run_id)
     graph = rg_mod.build_run_graph(events)
-    metrics = metrics_mod.compute_all(
+    metrics = metrics_mod.run_indicators(
+        outcome=run.outcome,
+        total_tokens=run.total_tokens,
+        total_cost_usd=run.total_cost_usd,
+        started_at=run.started_at,
+        ended_at=run.ended_at,
         events=events,
-        edges=graph.edges,
-        passed=(run.outcome == "pass"),
     )
     return RouteRunResponse(
         run_id=run.id,
@@ -232,11 +239,21 @@ async def get_clusters(
     routes_by_run: dict[str, list[str]] = {}
     outcomes_by_run: dict[str, str] = {}
     features_by_run: dict[str, cluster_mod.RunFeatures] = {}
+    indicators_by_run: dict[str, dict[str, float]] = {}
+    run_by_id = {r.id: r for r in runs}
     for r in runs:
         events = await _load_events_for_run(session, r.id)
         events_by_run[r.id] = events
         routes_by_run[r.id] = rg_mod.route_as_target_sequence(events)
         outcomes_by_run[r.id] = r.outcome
+        indicators_by_run[r.id] = metrics_mod.run_indicators(
+            outcome=r.outcome,
+            total_tokens=r.total_tokens,
+            total_cost_usd=r.total_cost_usd,
+            started_at=r.started_at,
+            ended_at=r.ended_at,
+            events=events,
+        )
         if events:
             features_by_run[r.id] = cluster_mod.RunFeatures(
                 event_types=[e.type for e in events],
@@ -270,14 +287,7 @@ async def get_clusters(
             rep_id = cluster_res.centroids_by_cluster[cid]
         rep_events = events_by_run[rep_id]
         rep_graph = rg_mod.build_run_graph(rep_events)
-        per_run_m = [
-            metrics_mod.compute_all(
-                events=events_by_run[rid],
-                edges=rg_mod.build_run_graph(events_by_run[rid]).edges,
-                passed=(outcomes_by_run[rid] == "pass"),
-            )
-            for rid in member_ids
-        ]
+        per_run_inds = [indicators_by_run[rid] for rid in member_ids]
         cluster_summaries.append(
             ClusterSummary(
                 cluster_id=cid,
@@ -285,14 +295,19 @@ async def get_clusters(
                 representative_run_id=rep_id,
                 member_run_ids=member_ids,
                 representative_graph=_graph_to_out(rep_graph),
-                metrics=metrics_mod.aggregate_metrics(per_run_m),
+                metrics=metrics_mod.group_stats(per_run_inds),
             )
         )
 
     aggregate = rg_mod.build_aggregate_graph(events_by_run)
+    # Experiment-wide stats — every run whose trace was captured.
+    experiment_stats = metrics_mod.group_stats(
+        [ind for rid, ind in indicators_by_run.items() if events_by_run[rid]]
+    )
     return ClustersResponse(
         experiment_id=experiment,
         k=cluster_res.k,
         clusters=cluster_summaries,
         aggregate_graph=_graph_to_out(aggregate),
+        experiment_stats=experiment_stats,
     )
