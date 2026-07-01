@@ -18,12 +18,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from runograph_backend.analysis import cluster as cluster_mod
 from runograph_backend.analysis import metrics as metrics_mod
 from runograph_backend.analysis import route_graph as rg_mod
+from runograph_backend.analysis import tables as tables_mod
 from runograph_backend.storage.db import session_scope
-from runograph_backend.storage.models import Event, Run
-from runograph_backend.storage.schemas import CanonicalEvent, EventCost
+from runograph_backend.storage.models import Run
 
 router = APIRouter(prefix="/api/v1/routes", tags=["routes"])
 
@@ -104,18 +103,10 @@ class ClustersResponse(BaseModel):
 
 # ----- helpers -----
 
-
-def _event_row_to_canonical(row: Event) -> CanonicalEvent:
-    return CanonicalEvent(
-        event_id=row.event_id,
-        timestamp=row.ts,
-        type=row.type,  # type: ignore[arg-type]
-        target=row.target,
-        content_summary=row.content_summary,
-        cost=EventCost(tokens=row.tokens, time_seconds=row.time_seconds),
-        parent_event_id=row.parent_event_id,
-        task_relevance_score=row.task_relevance_score,
-    )
+# Row loading lives in analysis.tables so the CSV export and this router
+# share one implementation.
+_load_events_for_run = tables_mod.load_events_for_run
+_load_runs_for_experiment = tables_mod.load_runs_for_experiment
 
 
 def _node_to_out(n: rg_mod.GraphNode) -> NodeOut:
@@ -148,26 +139,6 @@ def _graph_to_out(g: rg_mod.RouteGraph) -> GraphOut:
         sequence_length=g.sequence_length,
         run_count=g.run_count,
     )
-
-
-async def _load_events_for_run(session: AsyncSession, run_id: str) -> list[CanonicalEvent]:
-    rows = (
-        await session.execute(
-            select(Event).where(Event.run_id == run_id).order_by(Event.ts)
-        )
-    ).scalars().all()
-    return [_event_row_to_canonical(r) for r in rows]
-
-
-async def _load_runs_for_experiment(
-    session: AsyncSession, experiment_id: str
-) -> list[Run]:
-    rows = (
-        await session.execute(
-            select(Run).where(Run.experiment_id == experiment_id)
-        )
-    ).scalars().all()
-    return list(rows)
 
 
 # ----- endpoints -----
@@ -278,63 +249,19 @@ async def get_clusters(
     if k_max < k_min:
         raise HTTPException(status_code=400, detail="k_max must be >= k_min")
 
-    runs = await _load_runs_for_experiment(session, experiment)
-    if not runs:
+    data = await tables_mod.load_experiment_data(session, experiment)
+    if not data.runs:
         raise HTTPException(status_code=404, detail=f"no runs for experiment {experiment}")
 
-    events_by_run: dict[str, list[CanonicalEvent]] = {}
-    routes_by_run: dict[str, list[str]] = {}
-    outcomes_by_run: dict[str, str] = {}
-    features_by_run: dict[str, cluster_mod.RunFeatures] = {}
-    indicators_by_run: dict[str, dict[str, float]] = {}
-    run_by_id = {r.id: r for r in runs}
-    for r in runs:
-        events = await _load_events_for_run(session, r.id)
-        events_by_run[r.id] = events
-        routes_by_run[r.id] = rg_mod.route_as_target_sequence(events)
-        outcomes_by_run[r.id] = r.outcome
-        indicators_by_run[r.id] = metrics_mod.run_indicators(
-            outcome=r.outcome,
-            total_tokens=r.total_tokens,
-            total_cost_usd=r.total_cost_usd,
-            started_at=r.started_at,
-            ended_at=r.ended_at,
-            events=events,
-        )
-        if events:
-            features_by_run[r.id] = cluster_mod.RunFeatures(
-                event_types=[e.type for e in events],
-                unique_target_count=len({e.target for e in events if e.target}),
-                outcome=r.outcome,
-                total_tokens=r.total_tokens or 0,
-                total_cost_usd=r.total_cost_usd or 0.0,
-            )
-
-    # Skip runs with empty traces from clustering input; report them separately
-    # as a "no-route" cluster_id=0.
-    cluster_res = cluster_mod.cluster_routes(features_by_run, k_range=(k_min, k_max))
-
-    # Group runs by cluster
-    members: dict[int, list[str]] = {}
-    distances: dict[str, float] = {}
-    for a in cluster_res.assignments:
-        members.setdefault(a.cluster_id, []).append(a.run_id)
-        distances[a.run_id] = a.distance_to_centroid
-    # Empty-route runs become cluster 0 (no-route)
-    empty_runs = [rid for rid, seq in routes_by_run.items() if not seq]
-    if empty_runs:
-        members[0] = empty_runs
+    # Shared with the CSV export / table API — same seed, same assignments.
+    comp = tables_mod.compute_clusters(data, k_range=(k_min, k_max))
+    indicators = tables_mod.indicators_by_run(data)
 
     cluster_summaries: list[ClusterSummary] = []
-    for cid in sorted(members):
-        member_ids = members[cid]
-        if cid == 0:
-            rep_id = member_ids[0]
-        else:
-            rep_id = cluster_res.centroids_by_cluster[cid]
-        rep_events = events_by_run[rep_id]
-        rep_graph = rg_mod.build_run_graph(rep_events)
-        per_run_inds = [indicators_by_run[rid] for rid in member_ids]
+    for cid in sorted(comp.members):
+        member_ids = comp.members[cid]
+        rep_id = comp.representative_by_cluster[cid]
+        rep_graph = rg_mod.build_run_graph(data.events_by_run[rep_id])
         cluster_summaries.append(
             ClusterSummary(
                 cluster_id=cid,
@@ -342,18 +269,22 @@ async def get_clusters(
                 representative_run_id=rep_id,
                 member_run_ids=member_ids,
                 representative_graph=_graph_to_out(rep_graph),
-                metrics=metrics_mod.group_stats(per_run_inds),
+                metrics=metrics_mod.group_stats(
+                    [indicators[rid] for rid in member_ids]
+                ),
             )
         )
 
-    aggregate = rg_mod.build_aggregate_graph(events_by_run, outcomes_by_run=outcomes_by_run)
+    aggregate = rg_mod.build_aggregate_graph(
+        data.events_by_run, outcomes_by_run=data.outcomes_by_run
+    )
     # Experiment-wide stats — every run whose trace was captured.
     experiment_stats = metrics_mod.group_stats(
-        [ind for rid, ind in indicators_by_run.items() if events_by_run[rid]]
+        [ind for rid, ind in indicators.items() if data.events_by_run[rid]]
     )
     return ClustersResponse(
         experiment_id=experiment,
-        k=cluster_res.k,
+        k=comp.k,
         clusters=cluster_summaries,
         aggregate_graph=_graph_to_out(aggregate),
         experiment_stats=experiment_stats,
