@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import __version__
 from .api.v1.routes import router as routes_router
 from .api.v1.runs import router as runs_router
+from .api.v1.tables import router as tables_router
 from .storage.db import init_db
 
 
@@ -46,6 +47,7 @@ app.add_middleware(
 
 app.include_router(runs_router)
 app.include_router(routes_router)
+app.include_router(tables_router)
 
 
 @app.get("/healthz")
