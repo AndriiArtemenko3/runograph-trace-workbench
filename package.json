@@ -1,6 +1,7 @@
 {
   "name": "runograph-app",
   "private": true,
+  "license": "UNLICENSED",
   "version": "0.3.0-alpha.0",
   "type": "module",
   "scripts": {

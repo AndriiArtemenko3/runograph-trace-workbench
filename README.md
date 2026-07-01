@@ -1,18 +1,14 @@
 # runograph-app
 
-Desktop solver app for AI coding agent harnesses. The visual layer of the RunoGraph stack.
+B2B premium analysis workbench for AI coding agent harnesses. The visual layer of the RunoGraph stack.
 
 This is the React + Tauri frontend (Phase A: web; Phase B: Tauri wrap) paired with the FastAPI backend that serves Monte Carlo sim results to the UI.
 
-The companion CLI lives at https://github.com/AndriiArtemenko3/runograph and is MIT-licensed.
+The legacy MIT CLI is preserved on this repo's `legacy-cli` branch and is no longer developed.
 
 ## License
 
-This repo is licensed under **BUSL-1.1** (Business Source License 1.1). On **2029-05-19** (3 years from creation) the code auto-relicenses to **Apache-2.0**.
-
-Contributions require a signed CLA (see `CONTRIBUTING.md` — coming soon).
-
-This is **source-available, NOT OSI open-source.** The CLI is the open-source surface.
+Proprietary commercial software — see `LICENSE`. Copyright (c) 2026 Andrii Artemenko, all rights reserved. Any use requires a written commercial agreement.
 
 ## Status
 
@@ -20,7 +16,7 @@ Pre-alpha. Building the v0.3 alpha for mid-June 2026 launch. See:
 - `~/Desktop/MasterVaultV1/03-ideas-startups/strategy/2026-Q3.md` — quarterly strategy
 - `~/Desktop/MasterVaultV1/03-ideas-startups/strategy/v1-demo-script.md` — what v0.3 must demo
 - `~/Desktop/MasterVaultV1/03-ideas-startups/decisions/2026-05-19-runograph-sim-architecture.md` — sim engine spec
-- `~/Desktop/MasterVaultV1/03-ideas-startups/decisions/2026-05-19-runograph-license-model.md` — full license rationale
+- `~/Desktop/MasterVaultV1/03-ideas-startups/decisions/2026-05-19-runograph-license-model.md` — original BUSL rationale (superseded 2026-07-01: proprietary commercial)
 
 ## Stack
 

@@ -1,0 +1,26 @@
+RunoGraph Commercial License
+
+Copyright (c) 2026 Andrii Artemenko. All rights reserved.
+
+RunoGraph ("the Software") is proprietary commercial software.
+
+No license, express or implied, is granted to any person or entity to
+use, copy, modify, merge, publish, distribute, sublicense, or sell
+copies of the Software, in whole or in part, except under a separate
+written commercial agreement with the copyright holder.
+
+Access to this repository does not grant any rights to the Software
+beyond viewing for evaluation purposes authorized by the copyright
+holder. Unauthorized copying, modification, distribution, or use of
+the Software, via any medium, is strictly prohibited.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES
+OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
+
+Commercial licensing inquiries: andrii.art.design@gmail.com
+
+Note: code on the `legacy-cli` branch predates this license and remains
+under the MIT terms recorded in that branch's LICENSE file.

@@ -5,7 +5,7 @@ description = "Sim engine + FastAPI surface for the runograph-app desktop solver
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Andrii Artemenko" }]
-license = { text = "BUSL-1.1" }
+license = { text = "Proprietary" }
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
