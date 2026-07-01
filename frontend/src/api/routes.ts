@@ -18,6 +18,13 @@ export interface GraphEdge {
   target: string;
   count: number;
   totalTimeSeconds: number;
+  /** Conformance counts — RUNS that traversed this edge AND passed/failed.
+   *  Both 0 unless the aggregator was called with outcomes_by_run (single-
+   *  run graphs return 0). Mode E uses these to classify edges as
+   *  pass-only (pass>0 && fail==0), fail-only (fail>0 && pass==0), or
+   *  shared (both >0). */
+  passCount?: number;
+  failCount?: number;
 }
 
 export interface RouteGraphData {
@@ -116,5 +123,97 @@ export function useRunRoute(runId: string | null): AsyncState<RouteRunResponse> 
 export function useRunsList(experimentId: string): AsyncState<RunSummary[]> {
   return useFetched<RunSummary[]>(
     `/api/v1/runs?experimentId=${encodeURIComponent(experimentId)}`,
+  );
+}
+
+/** Filters accepted by GET /api/v1/routes/aggregate. Any subset; absent
+ *  keys mean "do not filter on this dimension". `runIds`, when present,
+ *  is a hard whitelist applied before the other filters. */
+export interface AggregateFilters {
+  outcome?: "pass" | "fail" | "error";
+  model?: string;
+  costMin?: number;
+  costMax?: number;
+  latencyMin?: number;
+  latencyMax?: number;
+  runIds?: string[];
+}
+
+function aggregateUrl(
+  experimentId: string,
+  f: AggregateFilters | undefined,
+): string {
+  const params = new URLSearchParams({ experiment: experimentId });
+  if (f) {
+    if (f.outcome) params.set("outcome", f.outcome);
+    if (f.model) params.set("model", f.model);
+    if (f.costMin != null) params.set("costMin", String(f.costMin));
+    if (f.costMax != null) params.set("costMax", String(f.costMax));
+    if (f.latencyMin != null) params.set("latencyMin", String(f.latencyMin));
+    if (f.latencyMax != null) params.set("latencyMax", String(f.latencyMax));
+    if (f.runIds && f.runIds.length > 0) {
+      params.set("runIds", f.runIds.join(","));
+    }
+  }
+  return `/api/v1/routes/aggregate?${params.toString()}`;
+}
+
+/** Fetch the aggregate route graph. Null filters yields the full-experiment
+ *  aggregate — identical to the `aggregateGraph` field on /clusters but
+ *  cheaper because clustering is skipped server-side. */
+export function useAggregateGraph(
+  experimentId: string,
+  filters?: AggregateFilters,
+): AsyncState<RouteGraphData> {
+  // useMemo-like memoization via JSON-stable key — re-render only when
+  // filters actually change.
+  return useFetched<RouteGraphData>(aggregateUrl(experimentId, filters));
+}
+
+/** Per-run touched-node sets. Used by the aggregate page to compute exact
+ *  pass-rate-per-node colouring rather than the cluster-rep approximation. */
+export interface TouchedNodesResponse {
+  experimentId: string;
+  touched: Record<string, string[]>;
+}
+
+export function useTouchedNodes(
+  experimentId: string,
+): AsyncState<TouchedNodesResponse> {
+  return useFetched<TouchedNodesResponse>(
+    `/api/v1/routes/touched-nodes?experiment=${encodeURIComponent(experimentId)}`,
+  );
+}
+
+/** Hierarchical repo file tree with per-file visit counts. Drives the repo
+ *  backdrop prototypes (treemap, directory layout, tree pane). */
+export interface RepoTreeNode {
+  name: string;
+  kind: "dir" | "file";
+  path?: string;
+  size?: number;
+  visits: number;
+  children?: RepoTreeNode[];
+  totalFiles: number;
+  totalSize: number;
+  totalVisits: number;
+}
+
+export interface RepoTreeResponse {
+  experimentId: string;
+  repoRootName: string;
+  tree: RepoTreeNode;
+  fileCount: number;
+  touchedCount: number;
+}
+
+export function useRepoTree(
+  experimentId: string,
+  skip = false,
+): AsyncState<RepoTreeResponse> {
+  return useFetched<RepoTreeResponse>(
+    skip || !experimentId
+      ? null
+      : `/api/v1/routes/repo-tree?experiment=${encodeURIComponent(experimentId)}`,
   );
 }

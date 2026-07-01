@@ -1,17 +1,15 @@
 import clsx from "clsx";
 
 /**
- * View-switcher — segmented control that swaps between Solver Grid views.
+ * View-switcher — segmented control that swaps between solver views.
  *
- * Lives in the chrome top-bar. 4 segments (Matrix / Heat-map / Stage-tree
- * / Editor). The active segment renders bg-accent-primary + dark text
- * (the WCAG-revised contrast rule shared with the Button atom); inactive
- * segments are text-secondary with hover lift to text-primary.
- *
- * Bit-locked to Figma canon in page \"03 Solver Grid v2\" top-bar IA.
+ * 4 segments (Routes / Heat-map / Stage-tree / Editor). Routes is the
+ * landing tab: a single aggregate force-directed canvas summarising every
+ * run in the experiment. The legacy "matrix" hash (`#/matrix`) is kept as
+ * a hidden alias that redirects to "routes" for one release.
  */
 
-export type SolverView = "matrix" | "heatmap" | "stagetree" | "editor" | "routes";
+export type SolverView = "routes" | "heatmap" | "stagetree" | "editor";
 
 export interface ViewSwitcherProps {
   active: SolverView;
@@ -20,11 +18,10 @@ export interface ViewSwitcherProps {
 }
 
 const VIEWS: { id: SolverView; label: string }[] = [
-  { id: "matrix", label: "Matrix" },
+  { id: "routes", label: "Routes" },
   { id: "heatmap", label: "Heat-map" },
   { id: "stagetree", label: "Stage-tree" },
   { id: "editor", label: "Editor" },
-  { id: "routes", label: "Routes" },
 ];
 
 export function ViewSwitcher({ active, onSelect, className }: ViewSwitcherProps) {

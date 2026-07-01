@@ -8,12 +8,12 @@ const meta: Meta<typeof ViewSwitcher> = {
   parameters: {
     docs: {
       description: {
-        component: `Segmented control swapping between the four solver views (Matrix / Heat-map / Stage-tree / Editor). Renders inside the chrome top-bar.`,
+        component: `Segmented control swapping between the four solver views (Routes / Heat-map / Stage-tree / Editor). Renders inside the chrome top-bar.`,
       },
     },
   },
   argTypes: {
-    active: { control: "select", options: ["matrix", "heatmap", "stagetree", "editor"] },
+    active: { control: "select", options: ["routes", "heatmap", "stagetree", "editor"] },
   },
 };
 export default meta;
@@ -21,7 +21,7 @@ export default meta;
 type Story = StoryObj<typeof ViewSwitcher>;
 
 export const Default: Story = {
-  args: { active: "matrix" },
+  args: { active: "routes" },
   decorators: [
     (S) => (
       <div className="bg-bg-panel p-4 w-fit">
@@ -33,7 +33,7 @@ export const Default: Story = {
 
 export const Interactive: Story = {
   render: () => {
-    const [active, setActive] = useState<SolverView>("matrix");
+    const [active, setActive] = useState<SolverView>("routes");
     return (
       <div className="bg-bg-panel p-4 w-fit">
         <ViewSwitcher active={active} onSelect={setActive} />

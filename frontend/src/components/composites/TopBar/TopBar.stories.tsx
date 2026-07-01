@@ -24,7 +24,7 @@ export const Default: Story = {
     brand: "RunoGraph",
     crumb: "/ 03 Solver Grid",
     weightProfile: "Balanced",
-    activeView: "matrix",
+    activeView: "routes",
   },
   decorators: [
     (S) => (
@@ -37,7 +37,7 @@ export const Default: Story = {
 
 export const Interactive: Story = {
   render: () => {
-    const [view, setView] = useState<SolverView>("matrix");
+    const [view, setView] = useState<SolverView>("routes");
     const [weight, setWeight] = useState("Balanced");
     return (
       <div className="bg-bg-canvas w-[1440px]">

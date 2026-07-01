@@ -90,8 +90,19 @@ def execute_one_run(
     model: str,
     max_turns: int,
     timeout_seconds: int,
+    perturbations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute a single run end-to-end. Returns the meta.json payload."""
+    """Execute a single run end-to-end. Returns the meta.json payload.
+
+    `perturbations` (optional dict): synthetic interventions applied at
+    grading time. Supported keys:
+      outcome_override: "pass" | "fail" | "error" — forces final outcome
+        regardless of grade result. Used by the bug-injection experiment
+        (see 03-ideas-startups/decisions/2026-05-23-aggregate-map-bug-
+        injection-experiment.md) to test visualization responsiveness.
+
+    Future keys (not yet wired): edge_weight_noise, node_visit_anomalies.
+    """
     run_dir.mkdir(parents=True, exist_ok=True)
     events_path = run_dir / "events.jsonl"
     stream_path = run_dir / "stream.jsonl"
@@ -126,6 +137,13 @@ def execute_one_run(
     grade = grade_run(repo_dir)
     print(f"[{run_id}] grade: outcome={grade.outcome} · {grade.tests_summary}")
 
+    natural_outcome = grade.outcome if result.success else "error"
+    perturbed_outcome: str | None = None
+    if perturbations and (override := perturbations.get("outcome_override")):
+        if override in ("pass", "fail", "error"):
+            perturbed_outcome = override
+            print(f"[{run_id}] PERTURBATION: outcome_override {natural_outcome} -> {override}")
+
     ended_at = _now_iso()
     meta = {
         "runId": run_id,
@@ -133,7 +151,10 @@ def execute_one_run(
         "model": model,
         "startedAt": started_at,
         "endedAt": ended_at,
-        "outcome": grade.outcome if result.success else "error",
+        "outcome": perturbed_outcome or natural_outcome,
+        "naturalOutcome": natural_outcome,
+        "perturbed": bool(perturbed_outcome),
+        "perturbations": perturbations or {},
         "totalTokens": result.total_tokens,
         "totalCostUsd": result.total_cost_usd,
         "experimentId": experiment_id,
@@ -192,8 +213,14 @@ def execute_experiment(
     timeout_seconds: int,
     max_turns: int,
     parallel: int,
+    perturbations: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run n_runs end-to-end. Resumable: skips runs with status:complete."""
+    """Run n_runs end-to-end. Resumable: skips runs with status:complete.
+
+    `perturbations` (optional): applied to every run in this experiment
+    invocation. Recorded in the manifest so bug-injection experiments can
+    reconstruct A → A' → A baseline conditions by comparing manifests.
+    """
     exp_dir = data_dir / experiment_id
     runs_dir = exp_dir / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -201,6 +228,11 @@ def execute_experiment(
 
     if manifest_path.exists():
         manifest = _read_json(manifest_path)
+        # Record perturbations applied on THIS invocation, even on resumed runs.
+        if perturbations:
+            manifest.setdefault("perturbationLog", []).append(
+                {"ts": _now_iso(), "perturbations": perturbations}
+            )
     else:
         manifest = {
             "experimentId": experiment_id,
@@ -208,6 +240,10 @@ def execute_experiment(
             "model": model,
             "createdAt": _now_iso(),
             "targetRuns": n_runs,
+            "perturbations": perturbations or {},
+            "perturbationLog": (
+                [{"ts": _now_iso(), "perturbations": perturbations}] if perturbations else []
+            ),
             "runs": [],
         }
         _write_json(manifest_path, manifest)
@@ -238,6 +274,7 @@ def execute_experiment(
                 "model": model,
                 "max_turns": max_turns,
                 "timeout_seconds": timeout_seconds,
+                "perturbations": perturbations,
             }
         )
 
@@ -284,7 +321,26 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=120, help="Per-bash-call timeout (seconds)")
     parser.add_argument("--max-turns", type=int, default=40, help="Cap on agent loop turns per run")
     parser.add_argument("--parallel", type=int, default=1, help="Concurrent runs (default 1)")
+    parser.add_argument(
+        "--perturbations",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a JSON file describing perturbations applied to every run. "
+            "Schema: {\"outcome_override\": \"pass\"|\"fail\"|\"error\"}. "
+            "Used by the aggregate-map bug-injection experiment "
+            "(03-ideas-startups/decisions/2026-05-23-aggregate-map-bug-injection-experiment.md)."
+        ),
+    )
     args = parser.parse_args()
+
+    perturbations: dict[str, Any] | None = None
+    if args.perturbations:
+        if not args.perturbations.exists():
+            print(f"--perturbations file not found: {args.perturbations}")
+            return 1
+        perturbations = json.loads(args.perturbations.read_text())
+        print(f"loaded perturbations: {perturbations}")
 
     if args.probe:
         return probe_auth(args.model)
@@ -305,6 +361,7 @@ def main() -> int:
         timeout_seconds=args.timeout,
         max_turns=args.max_turns,
         parallel=args.parallel,
+        perturbations=perturbations,
     )
     print(f"experiment complete in {time.monotonic() - t0:.1f}s")
     return 0

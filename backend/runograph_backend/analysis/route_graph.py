@@ -59,6 +59,12 @@ class GraphEdge:
     target: str
     count: int = 0
     total_time_seconds: float = 0.0
+    # Conformance counts — populated only when build_aggregate_graph is called
+    # with outcomes_by_run. Granularity is RUNS (not transitions): each run
+    # that traversed this edge contributes 1 to pass_count or fail_count
+    # depending on the run's terminal outcome.
+    pass_count: int = 0
+    fail_count: int = 0
 
 
 @dataclass
@@ -129,14 +135,25 @@ def build_run_graph(events: list[CanonicalEvent]) -> RouteGraph:
     )
 
 
-def build_aggregate_graph(events_by_run: dict[str, list[CanonicalEvent]]) -> RouteGraph:
-    """Sum node + edge counts across every run in the experiment."""
+def build_aggregate_graph(
+    events_by_run: dict[str, list[CanonicalEvent]],
+    outcomes_by_run: dict[str, str] | None = None,
+) -> RouteGraph:
+    """Sum node + edge counts across every run in the experiment.
+
+    When `outcomes_by_run` is provided, also tallies per-edge pass_count and
+    fail_count (run-level granularity — one increment per unique edge per
+    run, regardless of how many times the run traversed it). This populates
+    the conformance fields on GraphEdge for Mode E rendering.
+    """
     nodes_by_id: dict[str, GraphNode] = {}
     edge_counter: Counter[tuple[str, str]] = Counter()
     edge_time: dict[tuple[str, str], float] = defaultdict(float)
+    edge_pass_count: Counter[tuple[str, str]] = Counter()
+    edge_fail_count: Counter[tuple[str, str]] = Counter()
     total_sequence = 0
 
-    for events in events_by_run.values():
+    for run_id, events in events_by_run.items():
         route = events_to_route(events)
         total_sequence += len(route)
         for evt in route:
@@ -154,15 +171,36 @@ def build_aggregate_graph(events_by_run: dict[str, list[CanonicalEvent]]) -> Rou
             n.event_types.add(evt.type)
             if evt.type == "error":
                 n.error_count += 1
+
+        # Tally transitions for this run + remember the unique edge set so
+        # we attribute outcome once per (run, edge), not once per transition.
+        this_run_edges: set[tuple[str, str]] = set()
         for prev, curr in zip(route, route[1:], strict=False):
             if not prev.target or not curr.target:
                 continue
             key = (_slug(prev.target), _slug(curr.target))
             edge_counter[key] += 1
             edge_time[key] += curr.cost.time_seconds
+            this_run_edges.add(key)
+
+        if outcomes_by_run is not None:
+            outcome = outcomes_by_run.get(run_id)
+            if outcome == "pass":
+                for key in this_run_edges:
+                    edge_pass_count[key] += 1
+            elif outcome in ("fail", "error"):
+                for key in this_run_edges:
+                    edge_fail_count[key] += 1
 
     edges = [
-        GraphEdge(source=src, target=dst, count=cnt, total_time_seconds=edge_time[(src, dst)])
+        GraphEdge(
+            source=src,
+            target=dst,
+            count=cnt,
+            total_time_seconds=edge_time[(src, dst)],
+            pass_count=edge_pass_count[(src, dst)],
+            fail_count=edge_fail_count[(src, dst)],
+        )
         for (src, dst), cnt in edge_counter.items()
     ]
 
