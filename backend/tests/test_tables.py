@@ -148,3 +148,48 @@ async def test_scoped_cluster_rows_keep_cluster_identity(session, tmp_path):
         r["representative_run_id"] for r in unscoped
     ]
     assert sum(r["n_runs"] for r in scoped) == 1
+
+
+@pytest.mark.asyncio
+async def test_filtered_export_parity_and_manifest(session, tmp_path):
+    import json
+
+    from runograph_backend.analysis import tables
+    from scripts.export_runs import export_experiment
+    from tests.conftest import ingest_run_variant
+
+    await _ingested_data(session)
+    await ingest_run_variant(session, tmp_path, "vr-fail", "fail")
+    await ingest_run_variant(session, tmp_path, "vr-pass", "pass")
+
+    out = tmp_path / "exports-filtered"
+    counts = await export_experiment(
+        session, "fixture-test", out, filters=["outcome:eq:fail"]
+    )
+    assert counts["runs.csv"] == 1
+    assert counts["clusters.csv"] > 0  # clusters keep identity, n_runs narrows
+
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["filters"] == ["outcome:eq:fail"]
+    assert manifest["matched_run_count"] == 1
+    assert manifest["seed"] == 42
+
+    # scoped edges carry no pass traversals (only the fail run remains)
+    edge_lines = (out / "edges.csv").read_text().splitlines()
+    pass_idx = tables.EDGES_COLUMNS.index("pass_count")
+    assert all(line.split(",")[pass_idx] == "0" for line in edge_lines[1:])
+
+
+@pytest.mark.asyncio
+async def test_export_csv_determinism(session, tmp_path):
+    from scripts.export_runs import export_experiment
+    from tests.conftest import ingest_run_variant
+
+    await _ingested_data(session)
+    await ingest_run_variant(session, tmp_path, "vr-fail", "fail")
+
+    out_a, out_b = tmp_path / "det-a", tmp_path / "det-b"
+    await export_experiment(session, "fixture-test", out_a)
+    await export_experiment(session, "fixture-test", out_b)
+    for name in ("runs.csv", "route_steps.csv", "clusters.csv", "edges.csv"):
+        assert (out_a / name).read_bytes() == (out_b / name).read_bytes(), name
