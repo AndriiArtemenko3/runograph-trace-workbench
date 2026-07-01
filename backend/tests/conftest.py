@@ -3,12 +3,28 @@ user's real ~/.runograph store is never touched."""
 
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
 FIXTURE_RUN = Path(__file__).parent / "fixtures" / "sample-run"
+
+
+async def ingest_run_variant(session, tmp_path: Path, run_id: str, outcome: str):
+    """Ingest a copy of the sample run under a new run id + outcome, so
+    tests get a multi-run experiment where scoping is meaningful."""
+    from runograph_backend.storage.ingest import ingest_run
+
+    dst = tmp_path / f"variant-{run_id}"
+    shutil.copytree(FIXTURE_RUN, dst)
+    meta = json.loads((dst / "meta.json").read_text())
+    meta["runId"] = run_id
+    meta["outcome"] = outcome
+    (dst / "meta.json").write_text(json.dumps(meta))
+    return await ingest_run(session, dst)
 
 
 @pytest.fixture(autouse=True)

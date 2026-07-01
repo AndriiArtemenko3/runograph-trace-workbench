@@ -179,6 +179,12 @@ RUNS_COLUMNS = (
     "cluster_id",
     "distance_to_centroid",
     "is_representative",
+    # z-scores vs the run's own cluster (full-experiment baselines; never
+    # change under scoping). Standard scores of raw indicators.
+    "cost_usd_z",
+    "tokens_total_z",
+    "latency_s_z",
+    "event_count_z",
 )
 
 STEPS_COLUMNS = (
@@ -214,20 +220,89 @@ EDGES_COLUMNS = (
     "total_time_seconds",
 )
 
+# Column -> kind registry driving filter validation + coercion (run_filter.py
+# backend-side, filters/predicate.ts client-side). Keys must exactly match
+# the *_COLUMNS constants — locked by test.
+COLUMN_KINDS: dict[str, dict[str, str]] = {
+    "runs": {
+        "run_id": "string",
+        "task_id": "string",
+        "model": "enum",
+        "outcome": "enum",
+        "total_tokens": "number",
+        "total_cost_usd": "number",
+        "latency_s": "number",
+        "event_count": "number",
+        "tool_call_count": "number",
+        "unique_targets": "number",
+        "error_count": "number",
+        "cluster_id": "enum",
+        "distance_to_centroid": "number",
+        "is_representative": "boolean",
+        "cost_usd_z": "number",
+        "tokens_total_z": "number",
+        "latency_s_z": "number",
+        "event_count_z": "number",
+    },
+    "steps": {
+        "run_id": "string",
+        "seq_idx": "number",
+        "event_type": "enum",
+        "target": "string",
+        "tokens": "number",
+        "time_seconds": "number",
+    },
+    "clusters": {
+        "cluster_id": "enum",
+        "n_runs": "number",
+        "representative_run_id": "string",
+        "pass_rate": "number",
+        "error_rate": "number",
+        **{
+            f"{field}_{suffix}": "number"
+            for field in _CLUSTER_STAT_FIELDS
+            for suffix in _CLUSTER_STAT_SUFFIXES
+        },
+    },
+    "edges": {
+        "source": "string",
+        "target": "string",
+        "count": "number",
+        "pass_count": "number",
+        "fail_count": "number",
+        "total_time_seconds": "number",
+    },
+}
+
 
 def _round(v: float) -> float:
     return round(float(v), 6)
+
+
+def cluster_stats_by_id(
+    data: ExperimentData,
+    clusters: ClusterComputation,
+    inds: dict[str, dict[str, float]] | None = None,
+) -> dict[int, dict[str, float]]:
+    """group_stats() per cluster over full-experiment members."""
+    inds = inds if inds is not None else indicators_by_run(data)
+    return {
+        cid: metrics_mod.group_stats([inds[rid] for rid in member_ids])
+        for cid, member_ids in clusters.members.items()
+    }
 
 
 def build_run_rows(
     data: ExperimentData, clusters: ClusterComputation
 ) -> list[dict]:
     inds = indicators_by_run(data)
+    stats_by_cluster = cluster_stats_by_id(data, clusters, inds)
     rows: list[dict] = []
     for r in sorted(data.runs, key=lambda r: r.id):
         ind = inds[r.id]
         a = clusters.assignment_by_run.get(r.id)
         cluster_id = a.cluster_id if a else 0
+        z = metrics_mod.run_vs_cluster_z(ind, stats_by_cluster.get(cluster_id, {}))
         rows.append(
             {
                 "run_id": r.id,
@@ -245,6 +320,10 @@ def build_run_rows(
                 "distance_to_centroid": _round(a.distance_to_centroid) if a else 0.0,
                 "is_representative": clusters.representative_by_cluster.get(cluster_id)
                 == r.id,
+                "cost_usd_z": _round(z.get("cost_usd_z", 0.0)),
+                "tokens_total_z": _round(z.get("tokens_total_z", 0.0)),
+                "latency_s_z": _round(z.get("latency_s_z", 0.0)),
+                "event_count_z": _round(z.get("event_count_z", 0.0)),
             }
         )
     return rows
@@ -269,12 +348,20 @@ def build_step_rows(data: ExperimentData) -> list[dict]:
 
 
 def build_cluster_rows(
-    data: ExperimentData, clusters: ClusterComputation
+    data: ExperimentData,
+    clusters: ClusterComputation,
+    scope_ids: set[str] | None = None,
 ) -> list[dict]:
+    """One row per cluster. With `scope_ids`, stats re-aggregate over
+    `members ∩ scope` — assignments and representatives stay experiment-
+    global so cluster identity is stable under scoping; zero-member
+    clusters render with n_runs=0 and zeroed stats."""
     inds = indicators_by_run(data)
     rows: list[dict] = []
     for cid in sorted(clusters.members):
         member_ids = clusters.members[cid]
+        if scope_ids is not None:
+            member_ids = [rid for rid in member_ids if rid in scope_ids]
         stats = metrics_mod.group_stats([inds[rid] for rid in member_ids])
         row: dict = {
             "cluster_id": cid,

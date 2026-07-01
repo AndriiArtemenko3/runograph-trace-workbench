@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from runograph_backend.analysis import metrics as metrics_mod
 from runograph_backend.analysis import route_graph as rg_mod
+from runograph_backend.analysis import run_filter
 from runograph_backend.analysis import tables as tables_mod
 from runograph_backend.storage.db import session_scope
 from runograph_backend.storage.models import Run
@@ -106,7 +107,6 @@ class ClustersResponse(BaseModel):
 # Row loading lives in analysis.tables so the CSV export and this router
 # share one implementation.
 _load_events_for_run = tables_mod.load_events_for_run
-_load_runs_for_experiment = tables_mod.load_runs_for_experiment
 
 
 def _node_to_out(n: rg_mod.GraphNode) -> NodeOut:
@@ -179,59 +179,61 @@ async def get_run_route(
 async def get_aggregate_route(
     session: Annotated[AsyncSession, Depends(session_scope)],
     experiment: str = Query(...),
-    outcome: str | None = Query(None, description="pass|fail|error — narrow to runs with this outcome"),
-    model: str | None = Query(None, description="exact model id match"),
-    cost_min: float | None = Query(None, alias="costMin", ge=0.0),
-    cost_max: float | None = Query(None, alias="costMax", ge=0.0),
-    latency_min: float | None = Query(None, alias="latencyMin", ge=0.0),
-    latency_max: float | None = Query(None, alias="latencyMax", ge=0.0),
+    s: Annotated[list[str] | None, Query(alias="s")] = None,
+    outcome: str | None = Query(None, description="DEPRECATED alias for s=outcome:eq:…"),
+    model: str | None = Query(None, description="DEPRECATED alias for s=model:eq:…"),
+    cost_min: float | None = Query(None, alias="costMin", ge=0.0, description="DEPRECATED alias"),
+    cost_max: float | None = Query(None, alias="costMax", ge=0.0, description="DEPRECATED alias"),
+    latency_min: float | None = Query(None, alias="latencyMin", ge=0.0, description="DEPRECATED alias"),
+    latency_max: float | None = Query(None, alias="latencyMax", ge=0.0, description="DEPRECATED alias"),
     run_ids: str | None = Query(None, alias="runIds", description="comma-separated run id whitelist"),
 ) -> GraphOut:
-    """Aggregate route graph for an experiment, optionally narrowed by filters.
+    """Aggregate route graph for an experiment, optionally narrowed to a
+    run scope.
 
-    With no filters, returns the full-experiment aggregate (same as the
-    `aggregateGraph` field on /clusters). When any filter narrows the run
-    set, returns a freshly summed graph over the matching subset — this is
-    what the frontend filter chips and distribution-strip brushes call.
+    Native filtering is `s=` filter-grammar predicates (shared with
+    /api/v1/tables/*). The individual query params are deprecated aliases
+    translated to predicates internally; note runs with missing timestamps
+    evaluate as latency_s == 0.0 under the shared evaluator.
     """
-    runs = await _load_runs_for_experiment(session, experiment)
-    if not runs:
+    data = await tables_mod.load_experiment_data(session, experiment)
+    if not data.runs:
         raise HTTPException(status_code=404, detail=f"no runs for experiment {experiment}")
 
-    whitelist: set[str] | None = None
-    if run_ids:
-        whitelist = {rid.strip() for rid in run_ids.split(",") if rid.strip()}
+    legacy: list[str] = []
+    if outcome:
+        legacy.append(f"outcome:eq:{outcome}")
+    if model:
+        legacy.append(f"model:eq:{model}")
+    if cost_min is not None:
+        legacy.append(f"total_cost_usd:gte:{cost_min}")
+    if cost_max is not None:
+        legacy.append(f"total_cost_usd:lte:{cost_max}")
+    if latency_min is not None:
+        legacy.append(f"latency_s:gte:{latency_min}")
+    if latency_max is not None:
+        legacy.append(f"latency_s:lte:{latency_max}")
 
-    def keep(r: Run) -> bool:
-        if whitelist is not None and r.id not in whitelist:
-            return False
-        if outcome and r.outcome != outcome:
-            return False
-        if model and r.model != model:
-            return False
-        if cost_min is not None and (r.total_cost_usd or 0.0) < cost_min:
-            return False
-        if cost_max is not None and (r.total_cost_usd or 0.0) > cost_max:
-            return False
-        if latency_min is not None or latency_max is not None:
-            if r.started_at is None or r.ended_at is None:
-                return False
-            lat = (r.ended_at - r.started_at).total_seconds()
-            if latency_min is not None and lat < latency_min:
-                return False
-            if latency_max is not None and lat > latency_max:
-                return False
-        return True
+    try:
+        preds = run_filter.parse_filters((s or []) + legacy)
+        run_filter.validate_predicates(preds, tables_mod.COLUMN_KINDS["runs"])
+        whitelist = run_filter.parse_run_whitelist(run_ids)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    selected = [r for r in runs if keep(r)]
-    if not selected:
-        # Empty filter result — return an empty graph rather than 404 so the
-        # frontend can render a "no runs match" state inline.
-        return GraphOut(nodes=[], edges=[], sequence_length=0, run_count=0)
+    scoped_data = data
+    if preds or whitelist is not None:
+        run_rows = tables_mod.build_run_rows(data, tables_mod.compute_clusters(data))
+        ids = run_filter.scoped_run_ids(data, run_rows, preds, whitelist)
+        if not ids:
+            # Empty filter result — return an empty graph rather than 404 so
+            # the frontend can render a "no runs match" state inline.
+            return GraphOut(nodes=[], edges=[], sequence_length=0, run_count=0)
+        scoped_data = run_filter.narrow(data, ids)
 
-    events_by_run = {r.id: await _load_events_for_run(session, r.id) for r in selected}
-    outcomes_by_run = {r.id: (r.outcome or "") for r in selected}
-    g = rg_mod.build_aggregate_graph(events_by_run, outcomes_by_run=outcomes_by_run)
+    g = rg_mod.build_aggregate_graph(
+        scoped_data.events_by_run, outcomes_by_run=scoped_data.outcomes_by_run
+    )
     return _graph_to_out(g)
 
 

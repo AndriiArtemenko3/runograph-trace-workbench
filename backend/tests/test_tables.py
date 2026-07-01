@@ -93,3 +93,58 @@ async def test_export_writes_four_csvs_with_exact_headers(session, tmp_path):
         lines = (out / name).read_text().splitlines()
         assert lines[0] == ",".join(columns)
         assert len(lines) - 1 == counts[name]
+
+
+@pytest.mark.asyncio
+async def test_z_columns_zero_for_single_run(session):
+    from runograph_backend.analysis import tables
+
+    data = await _ingested_data(session)
+    clusters = tables.compute_clusters(data)
+    row = tables.build_run_rows(data, clusters)[0]
+    # One run per cluster -> zero spread -> z is 0 by construction.
+    for col in ("cost_usd_z", "tokens_total_z", "latency_s_z", "event_count_z"):
+        assert row[col] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_z_columns_match_metrics_module(session, tmp_path):
+    from runograph_backend.analysis import metrics, tables
+    from tests.conftest import ingest_run_variant
+
+    await _ingested_data(session)
+    await ingest_run_variant(session, tmp_path, "vr-fail", "fail")
+    await ingest_run_variant(session, tmp_path, "vr-pass", "pass")
+    data = await tables.load_experiment_data(session, "fixture-test")
+    clusters = tables.compute_clusters(data)
+    inds = tables.indicators_by_run(data)
+    stats = tables.cluster_stats_by_id(data, clusters, inds)
+    for row in tables.build_run_rows(data, clusters):
+        expected = metrics.run_vs_cluster_z(
+            inds[row["run_id"]], stats.get(row["cluster_id"], {})
+        )
+        for col in ("cost_usd_z", "tokens_total_z", "latency_s_z", "event_count_z"):
+            assert row[col] == round(expected[col], 6)
+
+
+@pytest.mark.asyncio
+async def test_scoped_cluster_rows_keep_cluster_identity(session, tmp_path):
+    from runograph_backend.analysis import tables
+    from tests.conftest import ingest_run_variant
+
+    await _ingested_data(session)
+    await ingest_run_variant(session, tmp_path, "vr-fail", "fail")
+    await ingest_run_variant(session, tmp_path, "vr-pass", "pass")
+    data = await tables.load_experiment_data(session, "fixture-test")
+    clusters = tables.compute_clusters(data)
+
+    unscoped = tables.build_cluster_rows(data, clusters)
+    scoped = tables.build_cluster_rows(data, clusters, scope_ids={"vr-fail"})
+
+    # Cluster identity (ids + representatives) is scope-invariant; only the
+    # aggregated stats narrow.
+    assert [r["cluster_id"] for r in scoped] == [r["cluster_id"] for r in unscoped]
+    assert [r["representative_run_id"] for r in scoped] == [
+        r["representative_run_id"] for r in unscoped
+    ]
+    assert sum(r["n_runs"] for r in scoped) == 1
