@@ -18,7 +18,7 @@ import type { Config } from "tailwindcss";
 const rgb = (token: string) => `rgb(var(${token}) / <alpha-value>)`;
 
 const config: Config = {
-  content: ["./index.html", "./src/**/*.{ts,tsx}", "./.storybook/**/*.{ts,tsx}"],
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
   darkMode: "class",
   theme: {
     fontFamily: {

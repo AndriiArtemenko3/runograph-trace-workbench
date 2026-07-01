@@ -6,8 +6,7 @@ events.jsonl + meta.json files; consumers (the ingest pipeline) parse them
 into these schemas, then into the SQLAlchemy models in `models.py`.
 
 Aliases use camelCase so the JSON wire format matches the React consumer
-pattern already established for /api/v1/solver-grid, /heatmap, /stagetree,
-/editor.
+pattern used across the /api/v1 surface.
 """
 
 from __future__ import annotations

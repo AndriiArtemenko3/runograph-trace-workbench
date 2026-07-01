@@ -1,8 +1,8 @@
 # runograph-app
 
-B2B premium analysis workbench for AI coding agent harnesses. The visual layer of the RunoGraph stack.
+B2B premium analysis workbench for AI coding agent harnesses. Data-first: aggregate many real agent runs, confirm patterns in tables, earn the visuals later.
 
-This is the React + Tauri frontend (Phase A: web; Phase B: Tauri wrap) paired with the FastAPI backend that serves Monte Carlo sim results to the UI.
+React frontend (spreadsheet-style sheets over aggregated runs) paired with a FastAPI backend that ingests agent traces into SQLite and serves run/route/cluster aggregations.
 
 The legacy MIT CLI is preserved on this repo's `legacy-cli` branch and is no longer developed.
 
@@ -20,20 +20,19 @@ Pre-alpha. Building the v0.3 alpha for mid-June 2026 launch. See:
 
 ## Stack
 
-- Frontend: React 18 + TypeScript + Vite + Tailwind CSS + Zustand + xyflow + D3
-- Backend: Python 3.12 + FastAPI + asyncio + SQLAlchemy + DuckDB + vLLM (inference)
-- Tooling: pnpm workspaces, uv (Python), Storybook 8
+- Frontend: React 18 + TypeScript + Vite + Tailwind CSS (+ @tanstack/react-table in phase 3)
+- Backend: Python 3.12 + FastAPI + SQLAlchemy + SQLite (aiosqlite) + scipy/numpy (clustering)
+- Tooling: pnpm workspaces, uv (Python)
 
 ## Development
 
 ```bash
 # install
 pnpm install
-cd backend && uv sync && cd ..
+cd backend && uv sync --extra dev && cd ..
 
-# run frontend (Vite dev + Storybook in parallel)
+# run frontend
 pnpm --filter frontend dev
-pnpm --filter frontend storybook
 
 # run backend
 cd backend && uv run uvicorn runograph_backend.main:app --reload
@@ -44,9 +43,13 @@ cd backend && uv run uvicorn runograph_backend.main:app --reload
 ```
 runograph-app/
 ├── frontend/          React + TypeScript + Vite
-│   ├── src/components/ Canon Figma components ported (Heat-tile, EV-cell, etc.)
-│   ├── src/lib/        utilities, token bindings, design-system primitives
-│   └── .storybook/     visual reference + verification against Figma
-└── backend/           FastAPI + sim engine
-    └── runograph_backend/  task queue, worker pool, capture, aggregator
+│   ├── src/api/        fetch client + typed hooks
+│   ├── src/lib/        design-token bindings
+│   └── src/styles/     token CSS variables
+└── backend/           FastAPI + analysis engine
+    └── runograph_backend/
+        ├── storage/    SQLite models + trace ingestion
+        ├── analysis/   route graphs, clustering, metrics
+        ├── harness/    experiment runner (SWE-bench × Gemini)
+        └── api/v1/     runs + routes endpoints
 ```

@@ -1,17 +1,23 @@
 # runograph-backend
 
-FastAPI + sim engine for the desktop solver app.
+FastAPI surface + analysis engine over the SQLite trace store.
 
 ```bash
-uv sync
+uv sync --extra dev
 uv run uvicorn runograph_backend.main:app --reload
 ```
 
-Endpoints (stubs during Phase A; live during Phase A end / Phase B):
+Endpoints:
 
 - `GET /healthz` — liveness
-- `GET /api/v1/harnesses` — list configured harnesses + their composite EV
-- `GET /api/v1/runs` — list completed sim runs (paginated)
-- `GET /api/v1/runs/{run_id}/heat-map` — corpus heat-map for a single sim run
-- `GET /api/v1/runs/{run_id}/stage-tree` — stage decomposition for a single sim run
-- `GET /api/v1/runs/{run_id}/matrix` — EV matrix + failure-class breakdown + per-task outliers
+- `GET /api/v1/runs?experimentId=<id>` — run summaries
+- `GET /api/v1/runs/{run_id}` — single run + events
+- `POST /api/v1/runs/ingest` — ingest a run dir (`meta.json` + `events.jsonl`)
+- `GET /api/v1/routes/run/{run_id}` — single-run route graph
+- `GET /api/v1/routes/aggregate?experiment=<id>` — summed graph across runs (filterable)
+- `GET /api/v1/routes/clusters?experiment=<id>` — path families via k-means
+
+CLIs:
+
+- `uv run python -m scripts.run_experiment --task <swe-bench-id> --model <id> --n <runs>` — run and ingest an experiment sweep
+- `uv run python -m scripts.ingest_run <run_dir>` — ingest one run dir

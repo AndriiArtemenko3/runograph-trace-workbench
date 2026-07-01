@@ -44,3 +44,9 @@ sim_runs/
 
 # captured corpus (corpus material never enters this repo)
 corpus_cache/
+
+# typescript incremental build state
+*.tsbuildinfo
+
+# data exports (belong in ~/.runograph/exports/, never in the repo)
+exports/

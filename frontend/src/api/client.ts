@@ -1,11 +1,9 @@
-import type { SolverGridResponse } from "./types";
-
 /**
  * Tiny fetch wrapper. All paths go through `/api/...` and ride the Vite dev
  * proxy (vite.config.ts) → http://127.0.0.1:8000. Same-origin in production
  * once the FastAPI server bundles the SPA static assets.
  */
-async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
+export async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { Accept: "application/json", ...(init?.headers ?? {}) },
     ...init,
@@ -16,8 +14,3 @@ async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return (await res.json()) as T;
 }
-
-export const api = {
-  getSolverGrid: (signal?: AbortSignal) =>
-    getJSON<SolverGridResponse>("/api/v1/solver-grid", { signal }),
-};

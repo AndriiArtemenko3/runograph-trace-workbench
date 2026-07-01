@@ -1,61 +1,47 @@
 import { useEffect, useState } from "react";
-import type { SolverView } from "../components/ViewSwitcher";
 
-/** Active hash routes for the 4 solver views. The historical `#/matrix`
- *  hash is preserved as a legacy alias that resolves to "routes" — old
- *  bookmarks open the new aggregate page rather than 404. */
-const ROUTES: Record<string, SolverView> = {
-  "": "routes",
-  "#": "routes",
-  "#/": "routes",
-  "#/routes": "routes",
-  "#/matrix": "routes", // legacy alias
-  "#/heatmap": "heatmap",
-  "#/stagetree": "stagetree",
-  "#/editor": "editor",
+/** The four workbench sheets. Hash routes map 1:1; the bare hash falls
+ *  back to the runs sheet. */
+export type SheetView = "runs" | "steps" | "clusters" | "edges";
+
+const ROUTES: Record<string, SheetView> = {
+  "": "runs",
+  "#": "runs",
+  "#/": "runs",
+  "#/runs": "runs",
+  "#/steps": "steps",
+  "#/clusters": "clusters",
+  "#/edges": "edges",
 };
 
-const PATH_BY_VIEW: Record<SolverView, string> = {
-  routes: "#/routes",
-  heatmap: "#/heatmap",
-  stagetree: "#/stagetree",
-  editor: "#/editor",
+const PATH_BY_VIEW: Record<SheetView, string> = {
+  runs: "#/runs",
+  steps: "#/steps",
+  clusters: "#/clusters",
+  edges: "#/edges",
 };
 
-function parseHash(): SolverView {
+function parseHash(): SheetView {
   const h = window.location.hash;
-  return ROUTES[h] ?? "routes";
+  return ROUTES[h] ?? "runs";
 }
 
 /**
- * Hash-based router for the 4 solver views. Reads `window.location.hash`
- * on mount, listens for `hashchange`, returns the active view + a setter
+ * Hash-based router for the workbench sheets. Reads `window.location.hash`
+ * on mount, listens for `hashchange`, returns the active sheet + a setter
  * that pushes the new hash.
- *
- * Side effect on mount: if the URL hash is the legacy `#/matrix`, the
- * setter is invoked to rewrite to `#/routes` so subsequent navigation
- * stays canonical.
  */
-export function useHashRoute(): [SolverView, (v: SolverView) => void] {
-  const [view, setView] = useState<SolverView>(() => parseHash());
+export function useHashRoute(): [SheetView, (v: SheetView) => void] {
+  const [view, setView] = useState<SheetView>(() => parseHash());
 
   useEffect(() => {
-    // Normalize legacy `#/matrix` to the canonical `#/routes` both on
-    // initial mount and any time the user navigates to it mid-session.
-    const normalize = () => {
-      if (window.location.hash === "#/matrix") {
-        window.history.replaceState(null, "", "#/routes");
-        setView("routes");
-      } else {
-        setView(parseHash());
-      }
-    };
-    normalize();
-    window.addEventListener("hashchange", normalize);
-    return () => window.removeEventListener("hashchange", normalize);
+    const onChange = () => setView(parseHash());
+    onChange();
+    window.addEventListener("hashchange", onChange);
+    return () => window.removeEventListener("hashchange", onChange);
   }, []);
 
-  const navigate = (next: SolverView) => {
+  const navigate = (next: SheetView) => {
     const path = PATH_BY_VIEW[next];
     if (window.location.hash !== path) {
       window.location.hash = path;

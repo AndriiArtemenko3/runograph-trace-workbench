@@ -79,7 +79,7 @@ export type AsyncState<T> =
   | { status: "ready"; data: T }
   | { status: "error"; error: string };
 
-function useFetched<T>(url: string | null): AsyncState<T> {
+export function useFetched<T>(url: string | null): AsyncState<T> {
   const [state, setState] = useState<AsyncState<T>>({ status: "loading" });
   useEffect(() => {
     if (!url) return;
@@ -168,52 +168,4 @@ export function useAggregateGraph(
   // useMemo-like memoization via JSON-stable key — re-render only when
   // filters actually change.
   return useFetched<RouteGraphData>(aggregateUrl(experimentId, filters));
-}
-
-/** Per-run touched-node sets. Used by the aggregate page to compute exact
- *  pass-rate-per-node colouring rather than the cluster-rep approximation. */
-export interface TouchedNodesResponse {
-  experimentId: string;
-  touched: Record<string, string[]>;
-}
-
-export function useTouchedNodes(
-  experimentId: string,
-): AsyncState<TouchedNodesResponse> {
-  return useFetched<TouchedNodesResponse>(
-    `/api/v1/routes/touched-nodes?experiment=${encodeURIComponent(experimentId)}`,
-  );
-}
-
-/** Hierarchical repo file tree with per-file visit counts. Drives the repo
- *  backdrop prototypes (treemap, directory layout, tree pane). */
-export interface RepoTreeNode {
-  name: string;
-  kind: "dir" | "file";
-  path?: string;
-  size?: number;
-  visits: number;
-  children?: RepoTreeNode[];
-  totalFiles: number;
-  totalSize: number;
-  totalVisits: number;
-}
-
-export interface RepoTreeResponse {
-  experimentId: string;
-  repoRootName: string;
-  tree: RepoTreeNode;
-  fileCount: number;
-  touchedCount: number;
-}
-
-export function useRepoTree(
-  experimentId: string,
-  skip = false,
-): AsyncState<RepoTreeResponse> {
-  return useFetched<RepoTreeResponse>(
-    skip || !experimentId
-      ? null
-      : `/api/v1/routes/repo-tree?experiment=${encodeURIComponent(experimentId)}`,
-  );
 }

@@ -158,18 +158,3 @@ def run_vs_cluster_z(
         v = run_ind.get(field, 0.0)
         out[f"{field}_z"] = (v - mean) / std if std > 1e-9 else 0.0
     return out
-
-
-# ----- legacy shim (back-compat for any caller still using old names) -----
-
-
-def compute_all(*_args, **_kwargs) -> dict[str, float]:  # pragma: no cover
-    """Deprecated — kept so older imports don't break during the cutover.
-    Returns an empty dict; callers should migrate to run_indicators +
-    group_stats."""
-    return {}
-
-
-def aggregate_metrics(per_run_metrics: list[dict[str, float]]) -> dict[str, float]:
-    """Compatibility wrapper: routes group_stats."""
-    return group_stats(per_run_metrics)
