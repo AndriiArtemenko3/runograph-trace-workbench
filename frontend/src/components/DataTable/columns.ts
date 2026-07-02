@@ -1,5 +1,7 @@
 import type { ColumnDef, RowData } from "@tanstack/react-table";
 
+import type { ColumnKind } from "../../filters/predicate";
+
 declare module "@tanstack/react-table" {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface ColumnMeta<TData extends RowData, TValue> {
@@ -8,10 +10,11 @@ declare module "@tanstack/react-table" {
 }
 
 /** Declarative column spec — key doubles as the header so the UI reads
- *  exactly like the CSV export. */
+ *  exactly like the CSV export. `kind` drives filter ops + coercion and
+ *  must mirror backend tables.COLUMN_KINDS. */
 export interface ColSpec<T> {
   key: keyof T & string;
-  numeric?: boolean;
+  kind?: ColumnKind;
 }
 
 export function fmtCell(v: unknown): string {
@@ -29,6 +32,14 @@ export function makeColumns<T>(specs: ColSpec<T>[]): ColumnDef<T, unknown>[] {
     accessorKey: spec.key,
     header: spec.key,
     cell: (ctx) => fmtCell(ctx.getValue()),
-    meta: { numeric: spec.numeric ?? false },
+    meta: { numeric: spec.kind === "number" },
   }));
+}
+
+export function kindsFromSpecs<T>(
+  specs: ColSpec<T>[],
+): Record<string, ColumnKind> {
+  const kinds: Record<string, ColumnKind> = {};
+  for (const spec of specs) kinds[spec.key] = spec.kind ?? "string";
+  return kinds;
 }

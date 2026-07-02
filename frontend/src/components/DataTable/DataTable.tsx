@@ -11,6 +11,8 @@ import {
 import type {
   ColumnDef,
   ExpandedState,
+  OnChangeFn,
+  RowSelectionState,
   SortingState,
 } from "@tanstack/react-table";
 import { clsx } from "clsx";
@@ -20,6 +22,10 @@ interface DataTableProps<T> {
   columns: ColumnDef<T, unknown>[];
   /** Column ids to group by (e.g. ["cluster_id"]); empty = flat table. */
   grouping?: string[];
+  /** Providing selection props adds a leading checkbox column. */
+  rowSelection?: RowSelectionState;
+  onRowSelectionChange?: OnChangeFn<RowSelectionState>;
+  getRowId?: (row: T) => string;
 }
 
 /**
@@ -28,18 +34,59 @@ interface DataTableProps<T> {
  * collapsible group rows. Numeric columns declare `meta: { numeric: true }`
  * for right-aligned mono rendering.
  */
-export function DataTable<T>({ data, columns, grouping = [] }: DataTableProps<T>) {
+export function DataTable<T>({
+  data,
+  columns,
+  grouping = [],
+  rowSelection,
+  onRowSelectionChange,
+  getRowId,
+}: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState("");
   const [expanded, setExpanded] = useState<ExpandedState>({});
 
+  const selectable = onRowSelectionChange !== undefined;
+  const allColumns: ColumnDef<T, unknown>[] = selectable
+    ? [
+        {
+          id: "_select",
+          header: ({ table }) => (
+            <input
+              type="checkbox"
+              checked={table.getIsAllRowsSelected()}
+              onChange={table.getToggleAllRowsSelectedHandler()}
+            />
+          ),
+          cell: ({ row }) => (
+            <input
+              type="checkbox"
+              checked={row.getIsSelected()}
+              onChange={row.getToggleSelectedHandler()}
+            />
+          ),
+          enableSorting: false,
+        },
+        ...columns,
+      ]
+    : columns;
+
   const table = useReactTable({
     data,
-    columns,
-    state: { sorting, globalFilter, expanded, grouping },
+    columns: allColumns,
+    state: {
+      sorting,
+      globalFilter,
+      expanded,
+      grouping,
+      rowSelection: rowSelection ?? {},
+    },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
     onExpandedChange: setExpanded,
+    onRowSelectionChange,
+    enableRowSelection: selectable,
+    getRowId,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),

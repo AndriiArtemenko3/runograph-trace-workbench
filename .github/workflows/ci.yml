@@ -30,4 +30,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter frontend typecheck
+      - run: pnpm --filter frontend test
       - run: pnpm --filter frontend build

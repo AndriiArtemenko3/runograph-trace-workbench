@@ -21,6 +21,10 @@ export interface RunRow {
   cluster_id: number;
   distance_to_centroid: number;
   is_representative: boolean;
+  cost_usd_z: number;
+  tokens_total_z: number;
+  latency_s_z: number;
+  event_count_z: number;
 }
 
 export interface StepRow {
@@ -74,13 +78,22 @@ export function useExperiments(): AsyncState<ExperimentInfo[]> {
   return useFetched<ExperimentInfo[]>("/api/v1/experiments");
 }
 
+export interface ScopeParams {
+  s: string[];
+  runs: string | null;
+}
+
 export function useTableRows<T>(
   sheet: SheetView,
   experimentId: string | null,
+  scope?: ScopeParams,
 ): AsyncState<T[]> {
-  return useFetched<T[]>(
-    experimentId
-      ? `/api/v1/tables/${sheet}?experiment=${encodeURIComponent(experimentId)}`
-      : null,
-  );
+  let url: string | null = null;
+  if (experimentId) {
+    const sp = new URLSearchParams({ experiment: experimentId });
+    for (const pred of scope?.s ?? []) sp.append("s", pred);
+    if (scope?.runs) sp.set("runs", scope.runs);
+    url = `/api/v1/tables/${sheet}?${sp.toString()}`;
+  }
+  return useFetched<T[]>(url);
 }
