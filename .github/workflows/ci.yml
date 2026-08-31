@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -7,27 +10,31 @@ on:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
-          python-version: "3.12"
-      - run: uv sync --extra dev
-      - run: uv run pytest -q
+          version: "0.11.31"
+          python-version: "3.12.13"
+      - run: uv sync --python 3.12.13 --extra dev --frozen
+      - run: uv lock --check --offline
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen pytest -q
 
   frontend:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/setup@v2
         with:
-          node-version: 20
-          cache: pnpm
+          runtime: node@24.20.0
+          install: false
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter frontend typecheck
       - run: pnpm --filter frontend test

@@ -40,6 +40,9 @@ storybook.log
 # sim runs (large; never committed)
 sim_runs/
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
 *.duckdb
 
 # captured corpus (corpus material never enters this repo)

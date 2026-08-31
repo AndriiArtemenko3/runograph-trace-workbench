@@ -5,6 +5,7 @@ import {
   ROUTE_PSEUDO_OPS,
   parsePredicate,
   serializePredicate,
+  validatePredicate,
 } from "../../filters/predicate";
 import type {
   ColumnKind,
@@ -59,6 +60,11 @@ export function FilterBar({ columns, predicates, invalid, onChange }: FilterBarP
   const add = () => {
     try {
       const pred = parsePredicate(`${column}:${activeOp}:${value.trim()}`);
+      validatePredicate(
+        pred,
+        Object.fromEntries(columns.map((item) => [item.key, item.kind])),
+        column in ROUTE_PSEUDO_OPS,
+      );
       setError(null);
       setValue("");
       onChange([...predicates, pred]);
@@ -70,6 +76,7 @@ export function FilterBar({ columns, predicates, invalid, onChange }: FilterBarP
   return (
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <select
+        aria-label="Filter column"
         value={column}
         onChange={(e) => setColumn(e.target.value)}
         className="rounded border border-border-hairline bg-bg-sunken px-2 py-1 font-mono text-xs text-text-primary"
@@ -81,6 +88,7 @@ export function FilterBar({ columns, predicates, invalid, onChange }: FilterBarP
         ))}
       </select>
       <select
+        aria-label="Filter operator"
         value={activeOp}
         onChange={(e) => setOp(e.target.value as Op)}
         className="rounded border border-border-hairline bg-bg-sunken px-2 py-1 font-mono text-xs text-text-primary"
@@ -92,13 +100,15 @@ export function FilterBar({ columns, predicates, invalid, onChange }: FilterBarP
         ))}
       </select>
       <input
+        aria-label="Filter value"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && add()}
         placeholder={activeOp === "between" ? "lo,hi" : "value"}
-        className="w-40 rounded border border-border-hairline bg-bg-sunken px-2 py-1 font-mono text-xs text-text-primary placeholder:text-text-tertiary"
+        className="w-40 rounded border border-border-hairline bg-bg-sunken px-2 py-1 font-mono text-xs text-text-primary placeholder:text-text-secondary"
       />
       <button
+        type="button"
         onClick={add}
         className="rounded border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary hover:text-text-primary"
       >

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { clsx } from "clsx";
-import type { RowSelectionState } from "@tanstack/react-table";
+import type { OnChangeFn, RowSelectionState } from "@tanstack/react-table";
 
 import type { AsyncState } from "../api/routes";
 import { useExperiments, useTableRows } from "../api/tables";
@@ -11,6 +11,11 @@ import type {
   ScopeParams,
   StepRow,
 } from "../api/tables";
+import {
+  AsyncBoundary,
+  AsyncCollection,
+  StateNotice,
+} from "../components/AsyncState";
 import { DataTable, makeColumns } from "../components/DataTable";
 import { kindsFromSpecs } from "../components/DataTable/columns";
 import type { ColSpec } from "../components/DataTable/columns";
@@ -22,11 +27,20 @@ import {
   parsePredicate,
   percentile,
   serializePredicate,
+  validatePredicate,
 } from "../filters/predicate";
 import type { Predicate } from "../filters/predicate";
-import { buildRouteIndex, isRoutePredicate, routePredicateMatches } from "../filters/routeIndex";
+import {
+  buildRouteIndex,
+  isRoutePredicate,
+  routePredicateMatches,
+} from "../filters/routeIndex";
 import type { RouteIndex } from "../filters/routeIndex";
-import { RUN_ID_SCOPE_CAP, parseRunIds } from "../filters/scope";
+import {
+  RUN_ID_SCOPE_CAP,
+  isPublicId,
+  parseRunIds,
+} from "../filters/scope";
 import { useHashRoute } from "../router";
 import type { SheetView } from "../router";
 
@@ -36,6 +50,7 @@ const SHEETS: SheetView[] = ["runs", "steps", "clusters", "edges"];
 const RUN_SPECS: ColSpec<RunRow>[] = [
   { key: "run_id", kind: "string" },
   { key: "outcome", kind: "enum" },
+  { key: "outcome_source", kind: "enum" },
   { key: "cluster_id", kind: "enum" },
   { key: "total_tokens", kind: "number" },
   { key: "total_cost_usd", kind: "number" },
@@ -66,8 +81,9 @@ const STEP_SPECS: ColSpec<StepRow>[] = [
 const CLUSTER_SPECS: ColSpec<ClusterRow>[] = [
   { key: "cluster_id", kind: "enum" },
   { key: "n_runs", kind: "number" },
-  { key: "pass_rate", kind: "number" },
-  { key: "error_rate", kind: "number" },
+  { key: "outcome_label_source", kind: "enum" },
+  { key: "reported_pass_rate", kind: "number" },
+  { key: "reported_error_rate", kind: "number" },
   { key: "representative_run_id", kind: "string" },
   ...(
     ["cost_usd", "tokens_total", "latency_s", "event_count"] as const
@@ -83,8 +99,10 @@ const EDGE_SPECS: ColSpec<EdgeRow>[] = [
   { key: "source", kind: "string" },
   { key: "target", kind: "string" },
   { key: "count", kind: "number" },
-  { key: "pass_count", kind: "number" },
-  { key: "fail_count", kind: "number" },
+  { key: "outcome_label_source", kind: "enum" },
+  { key: "reported_pass_count", kind: "number" },
+  { key: "reported_fail_count", kind: "number" },
+  { key: "reported_error_count", kind: "number" },
   { key: "total_time_seconds", kind: "number" },
 ];
 
@@ -119,10 +137,16 @@ interface ParsedEntry {
   pred: Predicate | null;
 }
 
-function parseEntries(raw: string[]): ParsedEntry[] {
+function parseEntries(
+  raw: string[],
+  kinds: Record<string, FilterColumn["kind"]>,
+  allowRoutePseudo = false,
+): ParsedEntry[] {
   return raw.map((r) => {
     try {
-      return { raw: r, pred: parsePredicate(r) };
+      const pred = parsePredicate(r);
+      validatePredicate(pred, kinds, allowRoutePseudo);
+      return { raw: r, pred };
     } catch {
       return { raw: r, pred: null };
     }
@@ -133,55 +157,105 @@ function round6(v: number): string {
   return String(Math.round(v * 1e6) / 1e6);
 }
 
-function SheetState<T>({
-  state,
-  children,
-}: {
-  state: AsyncState<T[]>;
-  children: (rows: T[]) => JSX.Element;
-}) {
-  if (state.status === "loading") {
-    return <p className="font-mono text-sm text-text-tertiary">loading…</p>;
-  }
-  if (state.status === "error") {
-    return <p className="font-mono text-sm text-status-danger">{state.error}</p>;
-  }
-  return children(state.data);
-}
-
 export function Workbench() {
-  const [view, params, navigate, setParams] = useHashRoute();
+  const [view, params, navigate, setParams, replaceParams] = useHashRoute();
   const experiments = useExperiments();
-  const [experimentId, setExperimentId] = useState<string | null>(null);
   const [selection, setSelection] = useState<RowSelectionState>({});
+  const hasScopedHashParams =
+    params.f.length > 0 || params.s.length > 0 || params.runs !== null;
+
+  const experimentId = useMemo(() => {
+    if (experiments.status !== "ready") return null;
+    if (params.experiment === null) {
+      return experiments.data[0]?.experiment_id ?? null;
+    }
+    if (!isPublicId(params.experiment)) return null;
+    return experiments.data.find(
+      (experiment) => experiment.experiment_id === params.experiment,
+    )?.experiment_id ?? null;
+  }, [experiments, params.experiment]);
 
   useEffect(() => {
-    if (experimentId === null && experiments.status === "ready") {
-      const first = experiments.data[0];
-      if (first) setExperimentId(first.experiment_id);
+    if (
+      experiments.status === "ready" &&
+      params.experiment === null &&
+      experimentId !== null &&
+      !hasScopedHashParams
+    ) {
+      replaceParams({ experiment: experimentId });
     }
-  }, [experiments, experimentId]);
+  }, [
+    experimentId,
+    experiments.status,
+    hasScopedHashParams,
+    params.experiment,
+    replaceParams,
+  ]);
 
   useEffect(() => setSelection({}), [experimentId]);
 
   // ----- filter + scope state (URL is the source of truth) -----
-  const localEntries = useMemo(() => parseEntries(params.f), [params.f]);
+  const localKinds =
+    view === "runs"
+      ? RUN_KINDS
+      : view === "steps"
+        ? STEP_KINDS
+        : view === "clusters"
+          ? CLUSTER_KINDS
+          : EDGE_KINDS;
+  const localEntries = useMemo(
+    () => parseEntries(params.f, localKinds, view === "runs"),
+    [localKinds, params.f, view],
+  );
   const localPreds = localEntries.flatMap((e) => (e.pred ? [e.pred] : []));
   const invalidLocal = localEntries.filter((e) => !e.pred).map((e) => e.raw);
 
-  const scopeEntries = useMemo(() => parseEntries(params.s), [params.s]);
+  const scopeEntries = useMemo(
+    () => parseEntries(params.s, RUN_KINDS, true),
+    [params.s],
+  );
   const scopePreds = scopeEntries.flatMap((e) => (e.pred ? [e.pred] : []));
   const invalidScope = scopeEntries.filter((e) => !e.pred).map((e) => e.raw);
-  const scopeRunIds = useMemo(() => parseRunIds(params.runs), [params.runs]);
+  const parsedRunIds = useMemo(() => {
+    try {
+      return { ids: parseRunIds(params.runs), error: null };
+    } catch (error: unknown) {
+      return {
+        ids: null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }, [params.runs]);
+  const scopeRunIds = parsedRunIds.ids;
   const scopeActive = scopePreds.length > 0 || scopeRunIds !== null;
 
+  const experimentError =
+    experiments.status === "ready" &&
+    params.experiment !== null &&
+    experimentId === null
+      ? `unknown or invalid experiment '${params.experiment}'`
+      : null;
+  const missingExperimentError =
+    params.experiment === null && hasScopedHashParams
+      ? "an experiment is required when filter or run scope is present"
+      : null;
+  const contractIssues = [
+    experimentError,
+    missingExperimentError,
+    ...invalidLocal.map((raw) => `invalid filter '${raw}'`),
+    ...invalidScope.map((raw) => `invalid scope '${raw}'`),
+    parsedRunIds.error,
+  ].filter((issue): issue is string => issue !== null);
+  const contractInvalid = contractIssues.length > 0;
+  const dataExperimentId = contractInvalid ? null : experimentId;
+
   // ----- data -----
-  const runsState = useTableRows<RunRow>("runs", experimentId);
+  const runsState = useTableRows<RunRow>("runs", dataExperimentId);
   const routeNeeded =
     view === "steps" || [...localPreds, ...scopePreds].some(isRoutePredicate);
   const stepsState = useTableRows<StepRow>(
     "steps",
-    routeNeeded ? experimentId : null,
+    routeNeeded ? dataExperimentId : null,
   );
   const routeIdx: RouteIndex | null = useMemo(
     () => (stepsState.status === "ready" ? buildRouteIndex(stepsState.data) : null),
@@ -220,8 +294,10 @@ export function Workbench() {
   const selectedIds = Object.entries(selection)
     .filter(([, v]) => v)
     .map(([k]) => k);
+  const unsafeSelectedIds = selectedIds.filter((runId) => !isPublicId(runId));
 
   const scopeToSelection = () => {
+    if (unsafeSelectedIds.length > 0) return;
     setParams({ runs: selectedIds.join(",") });
     setSelection({});
   };
@@ -255,9 +331,9 @@ export function Workbench() {
 
   const runChips: QuickChip[] = useMemo(() => {
     const chips: QuickChip[] = [
-      { label: "pass", mergeColumn: "outcome", mergeValue: "pass" },
-      { label: "fail", mergeColumn: "outcome", mergeValue: "fail" },
-      { label: "error", mergeColumn: "outcome", mergeValue: "error" },
+      { label: "reported pass", mergeColumn: "outcome", mergeValue: "pass" },
+      { label: "reported fail", mergeColumn: "outcome", mergeValue: "fail" },
+      { label: "reported error", mergeColumn: "outcome", mergeValue: "error" },
     ];
     if (runsState.status === "ready" && runsState.data.length > 0) {
       const clusterIds = [...new Set(runsState.data.map((r) => r.cluster_id))].sort(
@@ -276,8 +352,16 @@ export function Workbench() {
         ["latency_s", "latency≥p95"],
       ] as const;
       for (const [col, label] of p95Cols) {
-        const p95 = percentile(runsState.data.map((r) => Number(r[col])), 0.95);
-        chips.push({ label, pred: { column: col, op: "gte", values: [round6(p95)] } });
+        const values = runsState.data
+          .map((row) => row[col])
+          .filter((value): value is number => value !== null);
+        if (values.length > 0) {
+          const p95 = percentile(values, 0.95);
+          chips.push({
+            label,
+            pred: { column: col, op: "gte", values: [round6(p95)] },
+          });
+        }
       }
       for (const col of [
         "cost_usd_z",
@@ -301,9 +385,15 @@ export function Workbench() {
       <TopBar
         experiments={experiments.status === "ready" ? experiments.data : []}
         selected={experimentId}
+        emptyLabel={
+          experiments.status === "loading"
+            ? "Loading experiments…"
+            : experiments.status === "error"
+              ? "Experiments unavailable"
+              : "No experiments"
+        }
         onSelect={(id) => {
-          setParams({ f: [], s: [], runs: null });
-          setExperimentId(id);
+          setParams({ experiment: id, f: [], s: [], runs: null });
         }}
       />
       <nav className="flex gap-1 border-b border-border-hairline bg-bg-panel px-6">
@@ -336,110 +426,256 @@ export function Workbench() {
         onClearAll={() => setParams({ s: [], runs: null })}
       />
       <main className="p-6">
-        {experimentId === null ? (
-          <p className="font-mono text-sm text-text-tertiary">
-            loading experiments…
-          </p>
-        ) : (
-          <>
-            <FilterBar
-              columns={FILTER_COLUMNS[view]}
-              predicates={localPreds}
-              invalid={invalidLocal}
-              onChange={setLocalPreds}
-            />
-            {view === "runs" && (
+        <AsyncCollection
+          state={experiments}
+          label="experiments"
+          loadingTitle="Loading experiments…"
+          errorTitle="Unable to load experiments"
+          errorDetail="The Workbench could not reach the experiments API. Check that the service is running, then retry."
+          emptyTitle="No experiments found"
+          emptyDetail="The API is available, but it returned no experiments. Add or import experiment data, then refresh."
+        >
+          {() =>
+            contractInvalid ? (
+              <StateNotice
+                tone="error"
+                title="Invalid workbench URL"
+                detail="The experiment, filter, or scope contract is invalid. Fix or clear the hash parameters; no trace rows were requested."
+                diagnostic={contractIssues.join("; ")}
+              />
+            ) : experimentId === null ? (
+              <StateNotice
+                tone="empty"
+                title="No experiment selected"
+                detail="Choose an experiment to open the Workbench."
+              />
+            ) : (
               <>
-                <QuickChips
-                  chips={runChips}
+                <p className="mb-3 font-mono text-xs text-text-secondary">
+                  Outcomes, token totals, costs, and timestamps are stored
+                  metadata. Source fields distinguish current external imports
+                  from unknown legacy provenance; RunoGraph verifies neither.
+                </p>
+                <FilterBar
+                  key={view}
+                  columns={FILTER_COLUMNS[view]}
                   predicates={localPreds}
+                  invalid={invalidLocal}
                   onChange={setLocalPreds}
                 />
-                <div className="mb-3 flex flex-wrap items-center gap-3">
-                  <label className="flex w-fit cursor-pointer items-center gap-2 font-mono text-xs text-text-secondary">
-                    <input
-                      type="checkbox"
-                      checked={groupByCluster}
-                      onChange={(e) => setGroupByCluster(e.target.checked)}
+                {view === "runs" && (
+                  <>
+                    <QuickChips
+                      chips={runChips}
+                      predicates={localPreds}
+                      onChange={setLocalPreds}
                     />
-                    group by cluster
-                  </label>
-                  <button
-                    onClick={pinFiltersAsScope}
-                    disabled={localPreds.length === 0}
-                    className="rounded border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary enabled:hover:text-text-primary disabled:opacity-40"
-                  >
-                    pin filters as scope
-                  </button>
-                  <button
-                    onClick={scopeToSelection}
-                    disabled={
-                      selectedIds.length === 0 ||
-                      selectedIds.length > RUN_ID_SCOPE_CAP
-                    }
-                    title={
-                      selectedIds.length > RUN_ID_SCOPE_CAP
-                        ? `selection over ${RUN_ID_SCOPE_CAP} — use filters for large sets`
-                        : undefined
-                    }
-                    className="rounded border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary enabled:hover:text-text-primary disabled:opacity-40"
-                  >
-                    scope to {selectedIds.length} selected
-                  </button>
-                </div>
-                {runsRows === null ? (
-                  <p className="font-mono text-sm text-text-tertiary">loading…</p>
-                ) : (
-                  <DataTable
-                    data={runsRows}
-                    columns={RUN_COLUMNS}
-                    grouping={groupByCluster ? ["cluster_id"] : []}
-                    rowSelection={selection}
-                    onRowSelectionChange={setSelection}
-                    getRowId={(r) => r.run_id}
+                    <div className="mb-3 flex flex-wrap items-center gap-3">
+                      <label className="flex w-fit cursor-pointer items-center gap-2 font-mono text-xs text-text-secondary">
+                        <input
+                          type="checkbox"
+                          checked={groupByCluster}
+                          onChange={(e) => setGroupByCluster(e.target.checked)}
+                        />
+                        group by cluster
+                      </label>
+                      <button
+                        onClick={pinFiltersAsScope}
+                        disabled={localPreds.length === 0}
+                        className="rounded border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary enabled:hover:text-text-primary disabled:opacity-40"
+                      >
+                        pin filters as scope
+                      </button>
+                      <button
+                        onClick={scopeToSelection}
+                        disabled={
+                          selectedIds.length === 0 ||
+                          selectedIds.length > RUN_ID_SCOPE_CAP ||
+                          unsafeSelectedIds.length > 0
+                        }
+                        title={
+                          unsafeSelectedIds.length > 0
+                            ? "legacy run IDs cannot be encoded in URL scope — export and re-ingest them under safe IDs"
+                            : selectedIds.length > RUN_ID_SCOPE_CAP
+                            ? `selection over ${RUN_ID_SCOPE_CAP} — use filters for large sets`
+                            : undefined
+                        }
+                        className="rounded border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary enabled:hover:text-text-primary disabled:opacity-40"
+                      >
+                        scope to {selectedIds.length} selected
+                      </button>
+                      {unsafeSelectedIds.length > 0 && (
+                        <span className="font-mono text-xs text-status-danger">
+                          Selected legacy run IDs cannot be URL-scoped; export
+                          and re-ingest them under safe IDs.
+                        </span>
+                      )}
+                    </div>
+                    <RunsSheet
+                      state={runsState}
+                      routeState={routeNeeded ? stepsState : null}
+                      rows={runsRows}
+                      grouping={groupByCluster ? ["cluster_id"] : []}
+                      selection={selection}
+                      onSelectionChange={setSelection}
+                    />
+                  </>
+                )}
+                {view === "steps" && (
+                  <StepsSheet
+                    state={stepsState}
+                    scopeDependency={scopeActive ? runsState : null}
+                    scopeIds={scopeIds}
+                    localFilter={compilePredicates<StepRow>(
+                      localPlain,
+                      STEP_KINDS,
+                    )}
+                  />
+                )}
+                {view === "clusters" && (
+                  <ScopedServerSheet<ClusterRow>
+                    sheet="clusters"
+                    experimentId={experimentId}
+                    scope={serverScope}
+                    columns={CLUSTER_COLUMNS}
+                    localFilter={compilePredicates<ClusterRow>(
+                      localPlain,
+                      CLUSTER_KINDS,
+                    )}
+                  />
+                )}
+                {view === "edges" && (
+                  <ScopedServerSheet<EdgeRow>
+                    sheet="edges"
+                    experimentId={experimentId}
+                    scope={serverScope}
+                    columns={EDGE_COLUMNS}
+                    localFilter={compilePredicates<EdgeRow>(
+                      localPlain,
+                      EDGE_KINDS,
+                    )}
                   />
                 )}
               </>
-            )}
-            {view === "steps" && (
-              <SheetState state={stepsState}>
-                {(rows) => {
-                  if (scopeIds === "loading") {
-                    return (
-                      <p className="font-mono text-sm text-text-tertiary">loading…</p>
-                    );
-                  }
-                  let out = rows;
-                  if (scopeIds instanceof Set) {
-                    out = out.filter((r) => scopeIds.has(r.run_id));
-                  }
-                  out = out.filter(compilePredicates<StepRow>(localPlain, STEP_KINDS));
-                  return <DataTable data={out} columns={STEP_COLUMNS} />;
-                }}
-              </SheetState>
-            )}
-            {view === "clusters" && (
-              <ScopedServerSheet<ClusterRow>
-                sheet="clusters"
-                experimentId={experimentId}
-                scope={serverScope}
-                columns={CLUSTER_COLUMNS}
-                localFilter={compilePredicates<ClusterRow>(localPlain, CLUSTER_KINDS)}
-              />
-            )}
-            {view === "edges" && (
-              <ScopedServerSheet<EdgeRow>
-                sheet="edges"
-                experimentId={experimentId}
-                scope={serverScope}
-                columns={EDGE_COLUMNS}
-                localFilter={compilePredicates<EdgeRow>(localPlain, EDGE_KINDS)}
-              />
-            )}
-          </>
-        )}
+            )
+          }
+        </AsyncCollection>
       </main>
     </div>
+  );
+}
+
+export function RunsSheet({
+  state,
+  routeState,
+  rows,
+  grouping,
+  selection,
+  onSelectionChange,
+}: {
+  state: AsyncState<RunRow[]>;
+  routeState: AsyncState<StepRow[]> | null;
+  rows: RunRow[] | null;
+  grouping: string[];
+  selection: RowSelectionState;
+  onSelectionChange: OnChangeFn<RowSelectionState>;
+}) {
+  return (
+    <AsyncCollection
+      state={state}
+      label="runs"
+      emptyTitle="No runs found"
+      emptyDetail="This experiment has no run rows yet. Refresh after data is available."
+    >
+      {() => {
+        const content =
+          rows === null ? (
+            <StateNotice tone="loading" title="Preparing runs…" />
+          ) : rows.length === 0 ? (
+            <StateNotice
+              tone="empty"
+              title="No runs match the current view"
+              detail="Adjust or clear the current filters and scope to see runs."
+            />
+          ) : (
+            <DataTable
+              data={rows}
+              columns={RUN_COLUMNS}
+              grouping={grouping}
+              rowSelection={selection}
+              onRowSelectionChange={onSelectionChange}
+              getRowId={(row) => row.run_id}
+            />
+          );
+
+        return routeState ? (
+          <AsyncBoundary
+            state={routeState}
+            label="route data"
+            errorDetail="Route-based filters need step data from the API. Retry the request without changing the current sheet or scope."
+          >
+            {() => content}
+          </AsyncBoundary>
+        ) : (
+          content
+        );
+      }}
+    </AsyncCollection>
+  );
+}
+
+export function StepsSheet({
+  state,
+  scopeDependency,
+  scopeIds,
+  localFilter,
+}: {
+  state: AsyncState<StepRow[]>;
+  scopeDependency: AsyncState<RunRow[]> | null;
+  scopeIds: Set<string> | null | "loading";
+  localFilter: (row: StepRow) => boolean;
+}) {
+  return (
+    <AsyncCollection
+      state={state}
+      label="steps"
+      emptyTitle="No steps found"
+      emptyDetail="This experiment has no step rows yet. Refresh after data is available."
+    >
+      {(rows) => {
+        const content = (() => {
+          if (scopeIds === "loading") {
+            return <StateNotice tone="loading" title="Resolving run scope…" />;
+          }
+          let filtered = rows;
+          if (scopeIds instanceof Set) {
+            filtered = filtered.filter((row) => scopeIds.has(row.run_id));
+          }
+          filtered = filtered.filter(localFilter);
+          return filtered.length === 0 ? (
+            <StateNotice
+              tone="empty"
+              title="No steps match the current view"
+              detail="Adjust or clear the current filters and scope to see steps."
+            />
+          ) : (
+            <DataTable data={filtered} columns={STEP_COLUMNS} />
+          );
+        })();
+
+        return scopeDependency ? (
+          <AsyncBoundary
+            state={scopeDependency}
+            label="run scope"
+            errorDetail="The selected scope depends on run data from the API. Retry to resolve it without changing the current sheet."
+          >
+            {() => content}
+          </AsyncBoundary>
+        ) : (
+          content
+        );
+      }}
+    </AsyncCollection>
   );
 }
 
@@ -458,8 +694,28 @@ function ScopedServerSheet<T extends object>({
 }) {
   const state = useTableRows<T>(sheet, experimentId, scope);
   return (
-    <SheetState state={state}>
-      {(rows) => <DataTable data={rows.filter(localFilter)} columns={columns} />}
-    </SheetState>
+    <AsyncCollection
+      state={state}
+      label={sheet}
+      emptyTitle={`No ${sheet} found`}
+      emptyDetail={
+        scope
+          ? `No ${sheet} data match the current experiment and scope. Refresh after data or scope changes.`
+          : `This experiment has no ${sheet} data yet. Refresh after data is available.`
+      }
+    >
+      {(rows) => {
+        const filtered = rows.filter(localFilter);
+        return filtered.length === 0 ? (
+          <StateNotice
+            tone="empty"
+            title={`No ${sheet} match the current filters`}
+            detail="Adjust or clear the sheet filters to see rows."
+          />
+        ) : (
+          <DataTable data={filtered} columns={columns} />
+        );
+      }}
+    </AsyncCollection>
   );
 }

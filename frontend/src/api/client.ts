@@ -1,7 +1,7 @@
 /**
- * Tiny fetch wrapper. All paths go through `/api/...` and ride the Vite dev
- * proxy (vite.config.ts) → http://127.0.0.1:8000. Same-origin in production
- * once the FastAPI server bundles the SPA static assets.
+ * Tiny fetch wrapper. During local development, `/api/...` requests use the
+ * Vite proxy (vite.config.ts) to http://127.0.0.1:8000. This repository does
+ * not bundle the built SPA into FastAPI or define a production deployment.
  */
 export async function getJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {

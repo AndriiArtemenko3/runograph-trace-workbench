@@ -4,20 +4,17 @@ Each run is reduced to a small numeric feature vector capturing:
 
   * structural shape: event_count, unique_target_count, error_count
   * composition: ratio of file_read / file_edit / tool_call events
-  * outcome: pass and error as separate one-hot signals
-  * magnitude: log1p(tokens) and log1p(cents)
+  * magnitude: log1p(event tokens) and log1p(event time)
 
-These ten features are z-normalised across the dataset, then k-means runs
-across `k_range` (default 2..12). The best `k` is picked by silhouette
-on the Euclidean distance matrix. Clusters are re-labelled so cluster_id
-ascends with descending size (cluster 1 is largest).
+These eight behavior-only features are z-normalised across the dataset, then
+k-means runs across `k_range` (default 2..12). The best `k` is picked by
+silhouette on the Euclidean distance matrix. Clusters are re-labelled so
+cluster_id ascends with descending size (cluster 1 is largest), with
+canonical member ids breaking equal-size ties.
 
-This replaces a previous symbol-equality Levenshtein approach that
-overlumped 42 of 50 runs into one cluster on the runograph-50 dataset:
-shape signatures `T` (1-event fail), `REF` (canonical 3-event fix), and
-`RTRRREEF` (8-event explore-then-fix) all collided at distance ≤ 5 on
-short Unicode-encoded strings, regardless of how different the actual
-runs were in cost, outcome, or exploration depth.
+Terminal outcomes are deliberately absent from both `RunFeatures` and the
+feature vector. Callers may attach pass/fail/error labels only after cluster
+assignment, for reporting such as per-cluster pass and error rates.
 
 Heavy deps (`scipy`, `numpy`) are lazy-imported inside the entry point
 so the module is safe to import in environments without them.
@@ -44,14 +41,16 @@ class ClusterResult:
 
 @dataclass
 class RunFeatures:
-    """Raw inputs from one run. The caller pre-builds this from events +
-    the Run row in SQLite; cluster_routes derives the feature vector."""
+    """Behavioral inputs from one run used to derive the feature vector.
+
+    Terminal outcome is intentionally not accepted here: clustering must be
+    invariant when a caller changes only its post-hoc outcome labels.
+    """
 
     event_types: list[str]          # ordered sequence of CanonicalEvent.type
     unique_target_count: int
-    outcome: str                    # "pass" / "fail" / "error" / "running"
-    total_tokens: int
-    total_cost_usd: float
+    event_tokens: int
+    event_time_seconds: float
 
 
 FEATURE_NAMES = (
@@ -61,10 +60,8 @@ FEATURE_NAMES = (
     "ratio_reads",
     "ratio_edits",
     "ratio_tool_calls",
-    "outcome_pass",
-    "outcome_error",
-    "log_tokens",
-    "log_cost_cents",
+    "log_event_tokens",
+    "log_event_time_seconds",
 )
 
 
@@ -78,7 +75,10 @@ def _build_feature_matrix(
     """
     import numpy as np
 
-    run_ids = list(features_by_run.keys())
+    # Mapping insertion order can reflect database row order. Canonicalise
+    # it before both normalisation and seeded k-means so the same experiment
+    # always presents the same matrix to scipy.
+    run_ids = sorted(features_by_run)
     rows = []
     for rid in run_ids:
         f = features_by_run[rid]
@@ -95,10 +95,8 @@ def _build_feature_matrix(
                 read_count / n,                                       # ratio_reads
                 edit_count / n,                                       # ratio_edits
                 tool_count / n,                                       # ratio_tool_calls
-                1.0 if f.outcome == "pass" else 0.0,                  # outcome_pass
-                1.0 if f.outcome == "error" else 0.0,                 # outcome_error
-                float(np.log1p(max(0, f.total_tokens))),              # log_tokens
-                float(np.log1p(max(0.0, f.total_cost_usd * 100.0))),  # log_cost_cents
+                float(np.log1p(max(0, f.event_tokens))),               # event token magnitude
+                float(np.log1p(max(0.0, f.event_time_seconds))),       # event time magnitude
             ]
         )
 
@@ -120,7 +118,7 @@ def _silhouette(dist_matrix, labels: list[int]) -> float:
         return 0.0
 
     scores = np.zeros(n)
-    cluster_ids = set(labels)
+    cluster_ids = sorted(set(labels))
     for i in range(n):
         own_mask = arr == arr[i]
         own_mask[i] = False
@@ -154,7 +152,7 @@ def cluster_routes(
 ) -> ClusterResult:
     """K-means cluster runs by their feature vectors.
 
-    `k_range` is swept; each candidate k is scored by `silhouette ×
+    `k_range` is swept; each candidate k is scored by `silhouette x
     sqrt(1 - largest_cluster_fraction)` — the balance penalty rejects
     degenerate "everything in one cluster" outcomes that pure silhouette
     rewards (a single big cluster + 1-2 outliers can score 0.7 silhouette
@@ -167,43 +165,36 @@ def cluster_routes(
         (catches the [45, 2] degeneracy that silhouette alone would pick)
 
     Cluster ids are re-labelled descending by size: cluster 1 = largest.
+    Equal-size clusters are ordered by their sorted member ids, and medoid
+    ties select the lexicographically-smallest run id.
     """
     if not features_by_run:
         return ClusterResult(assignments=[], centroids_by_cluster={}, k=0)
-
-    if len(features_by_run) < k_range[0]:
-        run_ids = list(features_by_run.keys())
-        return ClusterResult(
-            assignments=[
-                ClusterAssignment(run_id=rid, cluster_id=1, distance_to_centroid=0.0)
-                for rid in run_ids
-            ],
-            centroids_by_cluster={1: run_ids[0]},
-            k=1,
-        )
 
     import numpy as np
     from scipy.cluster.vq import kmeans2
 
     matrix, run_ids = _build_feature_matrix(features_by_run)
     n = len(run_ids)
+    unique_row_count = len(np.unique(matrix, axis=0))
 
     # Pairwise Euclidean distances for silhouette scoring
     diff = matrix[:, np.newaxis, :] - matrix[np.newaxis, :, :]
     dist_matrix = np.sqrt((diff ** 2).sum(axis=2))
 
-    best_k = k_range[0]
+    best_k = 1
     best_balanced_score = -2.0
     best_labels = None
 
     rng = np.random.default_rng(seed)
 
-    for k in range(k_range[0], min(k_range[1], n) + 1):
+    for k in range(k_range[0], min(k_range[1], n, unique_row_count) + 1):
         # kmeans2 with kmeans++ init; rerun a few seeds and keep the run with
         # the lowest inertia (cushion against poor centroid init on small N).
         best_local_labels = None
         best_local_inertia = float("inf")
-        for trial in range(8):
+        best_local_signature: tuple[tuple[str, ...], ...] | None = None
+        for _trial in range(8):
             trial_seed = int(rng.integers(0, 1 << 31))
             try:
                 _centroids, labels = kmeans2(
@@ -212,11 +203,11 @@ def cluster_routes(
                     minit="++",
                     seed=trial_seed,
                     iter=100,
-                    missing="warn",
+                    missing="raise",
                 )
             except Exception:
                 continue
-            uniq = set(labels.tolist())
+            uniq = sorted(set(labels.tolist()))
             if len(uniq) < k or len(uniq) < 2:
                 continue
             sizes = [int((labels == c).sum()) for c in uniq]
@@ -230,51 +221,93 @@ def cluster_routes(
                 members = matrix[labels == c]
                 centroid = members.mean(axis=0)
                 inertia += float(((members - centroid) ** 2).sum())
-            if inertia < best_local_inertia:
+
+            # Raw scipy label numbers have no meaning. Canonical member
+            # groups make an equal-inertia tie independent of those labels
+            # and pick deterministically when multiple partitions tie.
+            signature = tuple(
+                sorted(
+                    tuple(
+                        run_ids[index]
+                        for index, label in enumerate(labels)
+                        if label == c
+                    )
+                    for c in uniq
+                )
+            )
+            if inertia < best_local_inertia or (
+                inertia == best_local_inertia
+                and (best_local_signature is None or signature < best_local_signature)
+            ):
                 best_local_inertia = inertia
                 best_local_labels = labels
+                best_local_signature = signature
 
         if best_local_labels is None:
             continue
         labels_list = best_local_labels.tolist()
         sil = _silhouette(dist_matrix, labels_list)
-        sizes = [labels_list.count(c) for c in set(labels_list)]
+        sizes = [labels_list.count(c) for c in sorted(set(labels_list))]
         largest_fraction = max(sizes) / n
-        # Balance penalty: silhouette × sqrt(1 - largest_fraction). The
+        # Balance penalty: silhouette x sqrt(1 - largest_fraction). The
         # square root softens the penalty so a slightly-imbalanced k=5 can
         # beat a perfectly-balanced k=2.
         balanced_score = sil * np.sqrt(max(0.0, 1.0 - largest_fraction))
-        if balanced_score > best_balanced_score:
+        score_tied = bool(
+            np.isclose(
+                balanced_score,
+                best_balanced_score,
+                rtol=1e-12,
+                atol=1e-12,
+            )
+        )
+        if (balanced_score > best_balanced_score and not score_tied) or (
+            score_tied and k > best_k
+        ):
             best_balanced_score = balanced_score
             best_k = k
             best_labels = best_local_labels
 
     if best_labels is None:
-        # Fallback: smallest k that worked at all
-        fallback_seed = int(rng.integers(0, 1 << 31))
-        _centroids, best_labels = kmeans2(
-            matrix, k_range[0], minit="++", seed=fallback_seed, iter=100
-        )
-        best_k = k_range[0]
+        # No requested candidate satisfied the hard constraints (or every
+        # behavior vector is identical). A single honest cluster is more
+        # useful than forcing k-means to emit empty clusters and warnings.
+        best_labels = np.zeros(n, dtype=int)
 
     labels_list = best_labels.tolist()
     by_cluster: dict[int, list[int]] = {}
     for idx, lab in enumerate(labels_list):
         by_cluster.setdefault(int(lab), []).append(idx)
 
-    # Re-label clusters so id 1 is the largest, id 2 is next, etc.
-    sorted_old_ids = sorted(by_cluster.keys(), key=lambda c: -len(by_cluster[c]))
+    # Re-label clusters so id 1 is the largest, id 2 is next, etc. Raw
+    # k-means label ids cannot break equal-size ties because they can be
+    # permuted without changing a solution; canonical member ids can.
+    sorted_old_ids = sorted(
+        by_cluster,
+        key=lambda c: (
+            -len(by_cluster[c]),
+            tuple(sorted(run_ids[index] for index in by_cluster[c])),
+        ),
+    )
     relabel = {old: new for new, old in enumerate(sorted_old_ids, start=1)}
 
     centroids_by_cluster: dict[int, str] = {}
     assignments: list[ClusterAssignment] = []
-    for old_cid, indices in by_cluster.items():
+    for old_cid in sorted_old_ids:
+        indices = by_cluster[old_cid]
         new_cid = relabel[old_cid]
         members = matrix[indices]
         centroid_vec = members.mean(axis=0)
-        # Medoid: member closest to the centroid in normalised space
+        # Medoid: member closest to the centroid in normalised space. An
+        # explicit run-id tie-break avoids relying on array order.
         dists = np.linalg.norm(members - centroid_vec, axis=1)
-        medoid_local = int(np.argmin(dists))
+        medoid_local = min(
+            range(len(indices)),
+            key=lambda local_i: (
+                float(dists[local_i]),
+                run_ids[indices[local_i]],
+            ),
+        )
         medoid_global = indices[medoid_local]
         centroids_by_cluster[new_cid] = run_ids[medoid_global]
         for local_i, global_i in enumerate(indices):
@@ -287,7 +320,7 @@ def cluster_routes(
             )
 
     return ClusterResult(
-        assignments=assignments,
+        assignments=sorted(assignments, key=lambda assignment: assignment.run_id),
         centroids_by_cluster=centroids_by_cluster,
         k=best_k,
     )

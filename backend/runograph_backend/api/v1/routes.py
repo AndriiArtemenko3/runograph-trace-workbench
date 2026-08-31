@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,13 @@ from runograph_backend.analysis import run_filter
 from runograph_backend.analysis import tables as tables_mod
 from runograph_backend.storage.db import session_scope
 from runograph_backend.storage.models import Run
+from runograph_backend.storage.schemas import (
+    ExperimentId,
+    OutcomeLabelSource,
+    RunId,
+    StoredOutcomeSource,
+    normalize_outcome_source,
+)
 
 router = APIRouter(prefix="/api/v1/routes", tags=["routes"])
 
@@ -48,12 +55,11 @@ class EdgeOut(BaseModel):
     target: str
     count: int
     total_time_seconds: float = Field(..., alias="totalTimeSeconds")
-    # Conformance counts — RUNS that traversed this edge AND passed/failed.
-    # Both 0 when the aggregator was called without outcomes_by_run (single-
-    # run graphs, or aggregate calls before Mode E went live). Frontend Mode
-    # E uses these to classify edges as pass-only / fail-only / shared.
-    pass_count: int = Field(0, alias="passCount")
-    fail_count: int = Field(0, alias="failCount")
+    # Post-hoc comparison against stored labels. GraphOut carries their
+    # external/unknown/mixed provenance; these are not analysis verdicts.
+    reported_pass_count: int = Field(0, alias="reportedPassCount")
+    reported_fail_count: int = Field(0, alias="reportedFailCount")
+    reported_error_count: int = Field(0, alias="reportedErrorCount")
 
     model_config = {"populate_by_name": True}
 
@@ -63,6 +69,7 @@ class GraphOut(BaseModel):
     edges: list[EdgeOut]
     sequence_length: int = Field(..., alias="sequenceLength")
     run_count: int = Field(1, alias="runCount")
+    outcome_label_source: OutcomeLabelSource = Field(..., alias="outcomeLabelSource")
 
     model_config = {"populate_by_name": True}
 
@@ -72,8 +79,9 @@ class RouteRunResponse(BaseModel):
     task_id: str = Field(..., alias="taskId")
     model: str
     outcome: str
+    outcome_source: StoredOutcomeSource = Field(..., alias="outcomeSource")
     graph: GraphOut
-    metrics: dict[str, float]
+    metrics: dict[str, float | None]
 
     model_config = {"populate_by_name": True}
 
@@ -83,21 +91,23 @@ class ClusterSummary(BaseModel):
     size: int
     representative_run_id: str = Field(..., alias="representativeRunId")
     member_run_ids: list[str] = Field(..., alias="memberRunIds")
+    outcome_label_source: OutcomeLabelSource = Field(..., alias="outcomeLabelSource")
     representative_graph: GraphOut = Field(..., alias="representativeGraph")
-    metrics: dict[str, float]
+    metrics: dict[str, float | None]
 
     model_config = {"populate_by_name": True}
 
 
 class ClustersResponse(BaseModel):
     experiment_id: str = Field(..., alias="experimentId")
+    outcome_label_source: OutcomeLabelSource = Field(..., alias="outcomeLabelSource")
     k: int
     clusters: list[ClusterSummary]
     aggregate_graph: GraphOut = Field(..., alias="aggregateGraph")
     # Experiment-wide group_stats: distribution stats computed over every
     # run with at least one event. Frontend reads this for the overview
     # metrics card and for per-cluster baseline deltas.
-    experiment_stats: dict[str, float] = Field(..., alias="experimentStats")
+    experiment_stats: dict[str, float | None] = Field(..., alias="experimentStats")
 
     model_config = {"populate_by_name": True}
 
@@ -127,17 +137,21 @@ def _edge_to_out(e: rg_mod.GraphEdge) -> EdgeOut:
         target=e.target,
         count=e.count,
         total_time_seconds=e.total_time_seconds,
-        pass_count=e.pass_count,
-        fail_count=e.fail_count,
+        reported_pass_count=e.reported_pass_count,
+        reported_fail_count=e.reported_fail_count,
+        reported_error_count=e.reported_error_count,
     )
 
 
-def _graph_to_out(g: rg_mod.RouteGraph) -> GraphOut:
+def _graph_to_out(
+    g: rg_mod.RouteGraph, outcome_label_source: OutcomeLabelSource
+) -> GraphOut:
     return GraphOut(
         nodes=[_node_to_out(n) for n in g.nodes],
         edges=[_edge_to_out(e) for e in g.edges],
         sequence_length=g.sequence_length,
         run_count=g.run_count,
+        outcome_label_source=outcome_label_source,
     )
 
 
@@ -146,7 +160,7 @@ def _graph_to_out(g: rg_mod.RouteGraph) -> GraphOut:
 
 @router.get("/run/{run_id}", response_model=RouteRunResponse, response_model_by_alias=True)
 async def get_run_route(
-    run_id: str,
+    run_id: Annotated[RunId, Path()],
     session: Annotated[AsyncSession, Depends(session_scope)],
 ) -> RouteRunResponse:
     run = (
@@ -165,12 +179,14 @@ async def get_run_route(
         ended_at=run.ended_at,
         events=events,
     )
+    source = normalize_outcome_source(run.outcome_source)
     return RouteRunResponse(
         run_id=run.id,
         task_id=run.task_id,
         model=run.model,
         outcome=run.outcome,
-        graph=_graph_to_out(graph),
+        outcome_source=source,
+        graph=_graph_to_out(graph, source),
         metrics=metrics,
     )
 
@@ -178,23 +194,29 @@ async def get_run_route(
 @router.get("/aggregate", response_model=GraphOut, response_model_by_alias=True)
 async def get_aggregate_route(
     session: Annotated[AsyncSession, Depends(session_scope)],
-    experiment: str = Query(...),
+    experiment: Annotated[ExperimentId, Query()],
     s: Annotated[list[str] | None, Query(alias="s")] = None,
     outcome: str | None = Query(None, description="DEPRECATED alias for s=outcome:eq:…"),
     model: str | None = Query(None, description="DEPRECATED alias for s=model:eq:…"),
     cost_min: float | None = Query(None, alias="costMin", ge=0.0, description="DEPRECATED alias"),
     cost_max: float | None = Query(None, alias="costMax", ge=0.0, description="DEPRECATED alias"),
-    latency_min: float | None = Query(None, alias="latencyMin", ge=0.0, description="DEPRECATED alias"),
-    latency_max: float | None = Query(None, alias="latencyMax", ge=0.0, description="DEPRECATED alias"),
-    run_ids: str | None = Query(None, alias="runIds", description="comma-separated run id whitelist"),
+    latency_min: float | None = Query(
+        None, alias="latencyMin", ge=0.0, description="DEPRECATED alias"
+    ),
+    latency_max: float | None = Query(
+        None, alias="latencyMax", ge=0.0, description="DEPRECATED alias"
+    ),
+    run_ids: str | None = Query(
+        None, alias="runIds", description="comma-separated run id whitelist"
+    ),
 ) -> GraphOut:
     """Aggregate route graph for an experiment, optionally narrowed to a
     run scope.
 
     Native filtering is `s=` filter-grammar predicates (shared with
     /api/v1/tables/*). The individual query params are deprecated aliases
-    translated to predicates internally; note runs with missing timestamps
-    evaluate as latency_s == 0.0 under the shared evaluator.
+    translated to predicates internally. Runs with unknown latency do not
+    match numeric latency predicates; unknown is never coerced to zero.
     """
     data = await tables_mod.load_experiment_data(session, experiment)
     if not data.runs:
@@ -228,13 +250,19 @@ async def get_aggregate_route(
         if not ids:
             # Empty filter result — return an empty graph rather than 404 so
             # the frontend can render a "no runs match" state inline.
-            return GraphOut(nodes=[], edges=[], sequence_length=0, run_count=0)
+            return GraphOut(
+                nodes=[],
+                edges=[],
+                sequence_length=0,
+                run_count=0,
+                outcome_label_source="none",
+            )
         scoped_data = run_filter.narrow(data, ids)
 
     g = rg_mod.build_aggregate_graph(
         scoped_data.events_by_run, outcomes_by_run=scoped_data.outcomes_by_run
     )
-    return _graph_to_out(g)
+    return _graph_to_out(g, tables_mod.outcome_label_source(scoped_data))
 
 
 @router.get(
@@ -244,7 +272,7 @@ async def get_aggregate_route(
 )
 async def get_clusters(
     session: Annotated[AsyncSession, Depends(session_scope)],
-    experiment: str = Query(...),
+    experiment: Annotated[ExperimentId, Query()],
     k_min: int = Query(2, ge=2, le=15),
     k_max: int = Query(12, ge=2, le=15),
 ) -> ClustersResponse:
@@ -258,6 +286,7 @@ async def get_clusters(
     # Shared with the CSV export / table API — same seed, same assignments.
     comp = tables_mod.compute_clusters(data, k_range=(k_min, k_max))
     indicators = tables_mod.indicators_by_run(data)
+    run_by_id = {run.id: run for run in data.runs}
 
     cluster_summaries: list[ClusterSummary] = []
     for cid in sorted(comp.members):
@@ -270,7 +299,13 @@ async def get_clusters(
                 size=len(member_ids),
                 representative_run_id=rep_id,
                 member_run_ids=member_ids,
-                representative_graph=_graph_to_out(rep_graph),
+                outcome_label_source=tables_mod.outcome_label_source(
+                    data, set(member_ids)
+                ),
+                representative_graph=_graph_to_out(
+                    rep_graph,
+                    normalize_outcome_source(run_by_id[rep_id].outcome_source),
+                ),
                 metrics=metrics_mod.group_stats(
                     [indicators[rid] for rid in member_ids]
                 ),
@@ -286,8 +321,11 @@ async def get_clusters(
     )
     return ClustersResponse(
         experiment_id=experiment,
+        outcome_label_source=tables_mod.outcome_label_source(data),
         k=comp.k,
         clusters=cluster_summaries,
-        aggregate_graph=_graph_to_out(aggregate),
+        aggregate_graph=_graph_to_out(
+            aggregate, tables_mod.outcome_label_source(data)
+        ),
         experiment_stats=experiment_stats,
     )

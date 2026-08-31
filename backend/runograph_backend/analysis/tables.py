@@ -5,8 +5,8 @@ Four grains, one row-builder each:
 
   runs        one row per run: real indicators + cluster assignment
   route_steps one row per (run, targeted event): long-form route sequence
-  clusters    one row per cluster: group_stats() distribution
-  edges       one row per target->target transition: counts + pass/fail split
+  clusters    one row per cluster: distributions + imported-label summaries
+  edges       one row per transition: counts + imported-label comparison
 
 All values are raw counts, tokens, seconds, and dollars — no composite
 scores. Column constants define the CSV header order and the API contract;
@@ -24,7 +24,12 @@ from runograph_backend.analysis import cluster as cluster_mod
 from runograph_backend.analysis import metrics as metrics_mod
 from runograph_backend.analysis import route_graph as rg_mod
 from runograph_backend.storage.models import Event, Run
-from runograph_backend.storage.schemas import CanonicalEvent, EventCost
+from runograph_backend.storage.schemas import (
+    CanonicalEvent,
+    EventCost,
+    OutcomeLabelSource,
+    normalize_outcome_source,
+)
 
 # ----- loading -----
 
@@ -40,6 +45,27 @@ class ExperimentData:
     @property
     def outcomes_by_run(self) -> dict[str, str]:
         return {r.id: (r.outcome or "") for r in self.runs}
+
+
+def outcome_label_source(
+    data: ExperimentData, run_ids: set[str] | None = None
+) -> OutcomeLabelSource:
+    """Summarize persisted label provenance for a run scope.
+
+    Empty scopes are ``none``. A scope with both current external imports and
+    legacy/unknown rows is ``mixed``; unexpected stored values are treated as
+    unknown rather than trusted.
+    """
+    sources = {
+        normalize_outcome_source(run.outcome_source)
+        for run in data.runs
+        if run_ids is None or run.id in run_ids
+    }
+    if not sources:
+        return "none"
+    if len(sources) > 1:
+        return "mixed"
+    return sources.pop()
 
 
 def _event_row_to_canonical(row: Event) -> CanonicalEvent:
@@ -60,7 +86,7 @@ async def load_events_for_run(
 ) -> list[CanonicalEvent]:
     rows = (
         await session.execute(
-            select(Event).where(Event.run_id == run_id).order_by(Event.ts)
+            select(Event).where(Event.run_id == run_id).order_by(Event.ts, Event.id)
         )
     ).scalars().all()
     return [_event_row_to_canonical(r) for r in rows]
@@ -71,7 +97,7 @@ async def load_runs_for_experiment(
 ) -> list[Run]:
     rows = (
         await session.execute(
-            select(Run).where(Run.experiment_id == experiment_id)
+            select(Run).where(Run.experiment_id == experiment_id).order_by(Run.id)
         )
     ).scalars().all()
     return list(rows)
@@ -87,7 +113,7 @@ async def load_experiment_data(
     )
 
 
-def indicators_by_run(data: ExperimentData) -> dict[str, dict[str, float]]:
+def indicators_by_run(data: ExperimentData) -> dict[str, dict[str, float | None]]:
     """metrics.run_indicators() for every run in the experiment."""
     return {
         r.id: metrics_mod.run_indicators(
@@ -125,16 +151,15 @@ def compute_clusters(
     data: ExperimentData, k_range: tuple[int, int] = (2, 12)
 ) -> ClusterComputation:
     features_by_run: dict[str, cluster_mod.RunFeatures] = {}
-    for r in data.runs:
+    for r in sorted(data.runs, key=lambda run: run.id):
         events = data.events_by_run[r.id]
         if not events:
             continue
         features_by_run[r.id] = cluster_mod.RunFeatures(
             event_types=[e.type for e in events],
             unique_target_count=len({e.target for e in events if e.target}),
-            outcome=r.outcome,
-            total_tokens=r.total_tokens or 0,
-            total_cost_usd=r.total_cost_usd or 0.0,
+            event_tokens=sum(max(0, e.cost.tokens) for e in events),
+            event_time_seconds=sum(max(0.0, e.cost.time_seconds) for e in events),
         )
 
     result = cluster_mod.cluster_routes(features_by_run, k_range=k_range)
@@ -144,14 +169,16 @@ def compute_clusters(
     for a in result.assignments:
         members.setdefault(a.cluster_id, []).append(a.run_id)
         assignment_by_run[a.run_id] = a
+    for member_ids in members.values():
+        member_ids.sort()
 
-    no_route = [r.id for r in data.runs if r.id not in assignment_by_run]
+    no_route = sorted(r.id for r in data.runs if r.id not in assignment_by_run)
     if no_route:
         members[0] = no_route
 
     representative_by_cluster = dict(result.centroids_by_cluster)
     if no_route:
-        representative_by_cluster[0] = no_route[0]
+        representative_by_cluster[0] = min(no_route)
 
     return ClusterComputation(
         k=result.k,
@@ -169,6 +196,7 @@ RUNS_COLUMNS = (
     "task_id",
     "model",
     "outcome",
+    "outcome_source",
     "total_tokens",
     "total_cost_usd",
     "latency_s",
@@ -203,20 +231,24 @@ CLUSTERS_COLUMNS = (
     "cluster_id",
     "n_runs",
     "representative_run_id",
-    "pass_rate",
-    "error_rate",
-) + tuple(
-    f"{field}_{suffix}"
-    for field in _CLUSTER_STAT_FIELDS
-    for suffix in _CLUSTER_STAT_SUFFIXES
+    "outcome_label_source",
+    "reported_pass_rate",
+    "reported_error_rate",
+    *(
+        f"{field}_{suffix}"
+        for field in _CLUSTER_STAT_FIELDS
+        for suffix in _CLUSTER_STAT_SUFFIXES
+    ),
 )
 
 EDGES_COLUMNS = (
     "source",
     "target",
     "count",
-    "pass_count",
-    "fail_count",
+    "outcome_label_source",
+    "reported_pass_count",
+    "reported_fail_count",
+    "reported_error_count",
     "total_time_seconds",
 )
 
@@ -229,6 +261,7 @@ COLUMN_KINDS: dict[str, dict[str, str]] = {
         "task_id": "string",
         "model": "enum",
         "outcome": "enum",
+        "outcome_source": "enum",
         "total_tokens": "number",
         "total_cost_usd": "number",
         "latency_s": "number",
@@ -256,8 +289,9 @@ COLUMN_KINDS: dict[str, dict[str, str]] = {
         "cluster_id": "enum",
         "n_runs": "number",
         "representative_run_id": "string",
-        "pass_rate": "number",
-        "error_rate": "number",
+        "outcome_label_source": "enum",
+        "reported_pass_rate": "number",
+        "reported_error_rate": "number",
         **{
             f"{field}_{suffix}": "number"
             for field in _CLUSTER_STAT_FIELDS
@@ -268,22 +302,24 @@ COLUMN_KINDS: dict[str, dict[str, str]] = {
         "source": "string",
         "target": "string",
         "count": "number",
-        "pass_count": "number",
-        "fail_count": "number",
+        "outcome_label_source": "enum",
+        "reported_pass_count": "number",
+        "reported_fail_count": "number",
+        "reported_error_count": "number",
         "total_time_seconds": "number",
     },
 }
 
 
-def _round(v: float) -> float:
-    return round(float(v), 6)
+def _round(v: float | None) -> float | None:
+    return round(float(v), 6) if v is not None else None
 
 
 def cluster_stats_by_id(
     data: ExperimentData,
     clusters: ClusterComputation,
-    inds: dict[str, dict[str, float]] | None = None,
-) -> dict[int, dict[str, float]]:
+    inds: dict[str, dict[str, float | None]] | None = None,
+) -> dict[int, dict[str, float | None]]:
     """group_stats() per cluster over full-experiment members."""
     inds = inds if inds is not None else indicators_by_run(data)
     return {
@@ -309,6 +345,7 @@ def build_run_rows(
                 "task_id": r.task_id,
                 "model": r.model,
                 "outcome": r.outcome,
+                "outcome_source": normalize_outcome_source(r.outcome_source),
                 "total_tokens": int(ind["tokens_total"]),
                 "total_cost_usd": _round(ind["cost_usd"]),
                 "latency_s": _round(ind["latency_s"]),
@@ -320,10 +357,10 @@ def build_run_rows(
                 "distance_to_centroid": _round(a.distance_to_centroid) if a else 0.0,
                 "is_representative": clusters.representative_by_cluster.get(cluster_id)
                 == r.id,
-                "cost_usd_z": _round(z.get("cost_usd_z", 0.0)),
-                "tokens_total_z": _round(z.get("tokens_total_z", 0.0)),
-                "latency_s_z": _round(z.get("latency_s_z", 0.0)),
-                "event_count_z": _round(z.get("event_count_z", 0.0)),
+                "cost_usd_z": _round(z.get("cost_usd_z")),
+                "tokens_total_z": _round(z.get("tokens_total_z")),
+                "latency_s_z": _round(z.get("latency_s_z")),
+                "event_count_z": _round(z.get("event_count_z")),
             }
         )
     return rows
@@ -355,7 +392,7 @@ def build_cluster_rows(
     """One row per cluster. With `scope_ids`, stats re-aggregate over
     `members ∩ scope` — assignments and representatives stay experiment-
     global so cluster identity is stable under scoping; zero-member
-    clusters render with n_runs=0 and zeroed stats."""
+    clusters render with n_runs=0 and null measurement stats."""
     inds = indicators_by_run(data)
     rows: list[dict] = []
     for cid in sorted(clusters.members):
@@ -367,12 +404,13 @@ def build_cluster_rows(
             "cluster_id": cid,
             "n_runs": len(member_ids),
             "representative_run_id": clusters.representative_by_cluster.get(cid, ""),
-            "pass_rate": _round(stats.get("pass_rate", 0.0)),
-            "error_rate": _round(stats.get("error_rate", 0.0)),
+            "outcome_label_source": outcome_label_source(data, set(member_ids)),
+            "reported_pass_rate": _round(stats.get("reported_pass_rate")),
+            "reported_error_rate": _round(stats.get("reported_error_rate")),
         }
         for field in _CLUSTER_STAT_FIELDS:
             for suffix in _CLUSTER_STAT_SUFFIXES:
-                row[f"{field}_{suffix}"] = _round(stats.get(f"{field}_{suffix}", 0.0))
+                row[f"{field}_{suffix}"] = _round(stats.get(f"{field}_{suffix}"))
         rows.append(row)
     return rows
 
@@ -381,14 +419,16 @@ def build_edge_rows(data: ExperimentData) -> list[dict]:
     graph = rg_mod.build_aggregate_graph(
         data.events_by_run, outcomes_by_run=data.outcomes_by_run
     )
-    target_by_slug = {n.id: n.target for n in graph.nodes}
+    target_by_id = {n.id: n.target for n in graph.nodes}
     rows = [
         {
-            "source": target_by_slug.get(e.source, e.source),
-            "target": target_by_slug.get(e.target, e.target),
+            "source": target_by_id.get(e.source, e.source),
+            "target": target_by_id.get(e.target, e.target),
             "count": e.count,
-            "pass_count": e.pass_count,
-            "fail_count": e.fail_count,
+            "outcome_label_source": outcome_label_source(data),
+            "reported_pass_count": e.reported_pass_count,
+            "reported_fail_count": e.reported_fail_count,
+            "reported_error_count": e.reported_error_count,
             "total_time_seconds": _round(e.total_time_seconds),
         }
         for e in graph.edges

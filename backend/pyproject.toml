@@ -1,7 +1,7 @@
 [project]
 name = "runograph-backend"
 version = "0.3.0a0"
-description = "Sim engine + FastAPI surface for the runograph-app desktop solver"
+description = "Offline trace ingestion and analysis backend for RunoGraph"
 readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Andrii Artemenko" }]
@@ -12,8 +12,10 @@ dependencies = [
     "pydantic>=2.9",
     "sqlalchemy>=2.0",
     "aiosqlite>=0.20",
-    "google-genai>=1.0",
-    "datasets>=2.20",
+    # SQLAlchemy's platform marker currently misses macOS' `arm64` spelling.
+    # Declare greenlet directly so a frozen Python 3.12 install is reproducible
+    # on both Apple Silicon and Linux.
+    "greenlet>=3.1",
     "scipy>=1.14",
     "numpy>=2.0",
 ]
@@ -24,7 +26,6 @@ dev = [
     "pytest-asyncio>=0.24",
     "httpx>=0.28",
     "ruff>=0.7",
-    "mypy>=1.13",
 ]
 
 [build-system]
@@ -37,7 +38,3 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF"]
-
-[tool.mypy]
-python_version = "3.12"
-strict = true

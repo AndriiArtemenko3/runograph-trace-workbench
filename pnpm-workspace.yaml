@@ -1,2 +1,11 @@
 packages:
   - frontend
+
+allowBuilds:
+  # Vite's platform binary is required for the checked-in frontend build.
+  esbuild: true
+
+overrides:
+  # Avoid a just-published selector release so pnpm 11's one-day
+  # minimum-release-age policy remains enforceable in clean CI installs.
+  nwsapi: 2.2.24

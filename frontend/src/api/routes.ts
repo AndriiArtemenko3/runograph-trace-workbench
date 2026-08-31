@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { getJSON } from "./client";
 
 /** Wire-format types from /api/v1/routes — camelCase aliases on the
  *  backend Pydantic models. */
@@ -18,20 +20,24 @@ export interface GraphEdge {
   target: string;
   count: number;
   totalTimeSeconds: number;
-  /** Conformance counts — RUNS that traversed this edge AND passed/failed.
-   *  Both 0 unless the aggregator was called with outcomes_by_run (single-
-   *  run graphs return 0). Mode E uses these to classify edges as
-   *  pass-only (pass>0 && fail==0), fail-only (fail>0 && pass==0), or
-   *  shared (both >0). */
-  passCount?: number;
-  failCount?: number;
+  /** Post-hoc counts of stored outcome-labelled runs that traversed this edge.
+   *  All are 0 for a single-run graph because only aggregate graphs attach
+   *  imported outcome labels. Graph provenance says whether their source is
+   *  external, unknown, mixed, or absent. They are not verification. */
+  reportedPassCount?: number;
+  reportedFailCount?: number;
+  reportedErrorCount?: number;
 }
+
+export type StoredOutcomeSource = "external" | "unknown";
+export type OutcomeLabelSource = StoredOutcomeSource | "mixed" | "none";
 
 export interface RouteGraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
   sequenceLength: number;
   runCount: number;
+  outcomeLabelSource: OutcomeLabelSource;
 }
 
 export interface ClusterSummary {
@@ -39,25 +45,30 @@ export interface ClusterSummary {
   size: number;
   representativeRunId: string;
   memberRunIds: string[];
+  outcomeLabelSource: OutcomeLabelSource;
   representativeGraph: RouteGraphData;
-  metrics: Record<string, number>;
+  metrics: Record<string, number | null>;
 }
 
 export interface ClustersResponse {
   experimentId: string;
+  outcomeLabelSource: OutcomeLabelSource;
   k: number;
   clusters: ClusterSummary[];
   aggregateGraph: RouteGraphData;
-  experimentStats: Record<string, number>;
+  experimentStats: Record<string, number | null>;
 }
+
+export type ReportedOutcome = "running" | "pass" | "fail" | "error";
 
 export interface RouteRunResponse {
   runId: string;
   taskId: string;
   model: string;
-  outcome: string;
+  outcome: ReportedOutcome;
+  outcomeSource: StoredOutcomeSource;
   graph: RouteGraphData;
-  metrics: Record<string, number>;
+  metrics: Record<string, number | null>;
 }
 
 /** One row from /api/v1/runs?experimentId=... — header summary, no graph. */
@@ -65,43 +76,117 @@ export interface RunSummary {
   runId: string;
   taskId: string;
   model: string;
-  outcome: "pass" | "fail" | "error" | string;
+  outcome: ReportedOutcome;
+  outcomeSource: StoredOutcomeSource;
   totalTokens: number;
   totalCostUsd: number;
   startedAt: string;
-  endedAt: string;
-  experimentId: string;
+  endedAt: string | null;
+  experimentId: string | null;
   eventCount: number;
 }
 
-export type AsyncState<T> =
+export type AsyncDataState<T> =
   | { status: "loading" }
   | { status: "ready"; data: T }
   | { status: "error"; error: string };
 
+export type AsyncState<T> = AsyncDataState<T> & { retry: () => void };
+
+export type JsonFetcher<T> = (url: string, signal: AbortSignal) => Promise<T>;
+
+export interface RequestSnapshot<T> {
+  url: string | null;
+  state: AsyncDataState<T>;
+}
+
+export interface RequestRunner {
+  run: () => Promise<void>;
+  cancel: () => void;
+}
+
+/** Never expose data or errors produced for a previous request URL. */
+export function stateForUrl<T>(
+  snapshot: RequestSnapshot<T>,
+  url: string | null,
+): AsyncDataState<T> {
+  return url !== null && snapshot.url === url
+    ? snapshot.state
+    : { status: "loading" };
+}
+
+/**
+ * A small, framework-independent request runner. Starting a new attempt aborts
+ * the previous one and publishes `loading` immediately; stale completions are
+ * ignored. Keeping this outside React makes retry/recovery behaviour directly
+ * testable while the hook below remains a thin lifecycle adapter.
+ */
+export function createRequestRunner<T>(
+  url: string,
+  publish: (state: AsyncDataState<T>) => void,
+  fetcher: JsonFetcher<T> = (path, signal) => getJSON<T>(path, { signal }),
+): RequestRunner {
+  let active: AbortController | null = null;
+
+  const run = async () => {
+    active?.abort();
+    const controller = new AbortController();
+    active = controller;
+    publish({ status: "loading" });
+
+    try {
+      const data = await fetcher(url, controller.signal);
+      if (active !== controller || controller.signal.aborted) return;
+      active = null;
+      publish({ status: "ready", data });
+    } catch (err: unknown) {
+      if (active !== controller || controller.signal.aborted) return;
+      active = null;
+      const message = err instanceof Error ? err.message : String(err);
+      publish({ status: "error", error: message });
+    }
+  };
+
+  return {
+    run,
+    cancel: () => {
+      const controller = active;
+      active = null;
+      controller?.abort();
+    },
+  };
+}
+
 export function useFetched<T>(url: string | null): AsyncState<T> {
-  const [state, setState] = useState<AsyncState<T>>({ status: "loading" });
+  const [snapshot, setSnapshot] = useState<RequestSnapshot<T>>({
+    url: null,
+    state: { status: "loading" },
+  });
+  const runnerRef = useRef<RequestRunner | null>(null);
+
   useEffect(() => {
-    if (!url) return;
-    setState({ status: "loading" });
-    const ctrl = new AbortController();
-    fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal })
-      .then(async (r) => {
-        if (!r.ok) {
-          const body = await r.text().catch(() => "");
-          throw new Error(`${r.status} ${r.statusText}: ${body.slice(0, 200)}`);
-        }
-        return (await r.json()) as T;
-      })
-      .then((data) => setState({ status: "ready", data }))
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        const msg = err instanceof Error ? err.message : String(err);
-        setState({ status: "error", error: msg });
-      });
-    return () => ctrl.abort();
+    if (!url) {
+      runnerRef.current = null;
+      return;
+    }
+
+    const runner = createRequestRunner<T>(url, (state) => {
+      setSnapshot({ url, state });
+    });
+    runnerRef.current = runner;
+    void runner.run();
+    return () => {
+      if (runnerRef.current === runner) runnerRef.current = null;
+      runner.cancel();
+    };
   }, [url]);
-  return state;
+
+  const retry = useCallback(() => {
+    void runnerRef.current?.run();
+  }, []);
+
+  const state = useMemo(() => stateForUrl(snapshot, url), [snapshot, url]);
+  return useMemo(() => ({ ...state, retry }), [state, retry]);
 }
 
 export function useRouteClusters(
@@ -118,8 +203,7 @@ export function useRunRoute(runId: string | null): AsyncState<RouteRunResponse> 
   );
 }
 
-/** Per-experiment run list. Backend returns rows for adjacent experiments
- *  too, so callers should filter on experimentId. */
+/** Fetch the run summaries belonging to one experiment. */
 export function useRunsList(experimentId: string): AsyncState<RunSummary[]> {
   return useFetched<RunSummary[]>(
     `/api/v1/runs?experimentId=${encodeURIComponent(experimentId)}`,
