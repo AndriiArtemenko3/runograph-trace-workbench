@@ -51,18 +51,23 @@ current tree is clean.
   operation.
 - [x] Search all reachable commits for private paths, personal data, generated
   corpora/databases, proprietary third-party material, and stale credentials.
-- [ ] Verify that synthetic fixtures are clearly synthetic and contain no
-  copied customer or production data.
+- [x] The owner confirms that the historical sample contains no customer or
+  production data and is authorized for publication. Confirmed on 2026-08-31.
 
 ## Legal and owner decisions
 
-- [ ] The owner confirms that publishing source under the current proprietary
+- [x] The owner confirms that publishing source under the current proprietary
   license is intentional. Obtain legal review if needed. Do not describe the
-  repository as open source.
-- [ ] Confirm that publishing the personal name and licensing-contact email
-  already present in `LICENSE` and package metadata is intentional.
-- [ ] Verify ownership and redistribution rights for every asset and
-  dependency notice. The `LICENSE` file is unchanged and controls use.
+  repository as open source. The owner confirmed this decision on 2026-08-31.
+- [x] Confirm that publishing the personal name and licensing-contact email
+  already present in `LICENSE` and package metadata is intentional. The owner
+  confirmed this disclosure on 2026-08-31.
+- [x] The owner confirms that publishing the candidate's only tracked image
+  asset, `docs/assets/runograph-workbench.jpg`, is intentional. It depicts the
+  synthetic `demo-offline` fixture. Confirmed on 2026-08-31.
+- [ ] Verify ownership and redistribution rights for all other repository
+  material and dependency notices. The `LICENSE` file is unchanged and
+  controls use.
 - [x] Preserve any separately licensed historical CLI snapshot in the private
   archive before deleting its public branch; keep the historical-license note
   accurate after cleanup.
