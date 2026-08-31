@@ -6,6 +6,9 @@ caller-produced JSONL events into four inspectable tables: runs, route steps,
 behavior clusters, and route edges. Its browser-based React UI and CSV export
 use the same backend row builders.
 
+`RunoGraph` remains the compact in-product brand; `Trace Workbench` names this
+repository and its deliberately bounded passive-analysis component.
+
 This repository is a pre-alpha prototype. It is intentionally scoped to
 passive ingestion and analysis: it does **not** run agents, execute trace
 content, sandbox commands, grade patches, or verify task outcomes.
@@ -47,6 +50,11 @@ reported pass/error rates and per-edge comparisons. See
 [Architecture and data flow](docs/ARCHITECTURE.md).
 
 ## Quick start
+
+The commands below document the local workflow for evaluators whose separate
+written agreement with the copyright holder permits them to run the software.
+Public repository visibility and this documentation do not grant execution
+rights; see [License](#license).
 
 Prerequisites:
 

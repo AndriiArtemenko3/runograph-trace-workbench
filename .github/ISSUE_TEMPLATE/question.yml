@@ -1,0 +1,31 @@
+name: Usage question
+description: Ask a focused question without sharing sensitive trace data.
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Questions do not grant permission to use or modify this proprietary software. Do not include credentials, private paths, real trace data, or customer information. Report suspected vulnerabilities through the repository Security policy.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the README, documentation, and existing issues first.
+          required: true
+        - label: My question contains only synthetic, non-sensitive information.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Explain the specific behavior or documentation you want clarified.
+    validations:
+      required: true
+  - type: input
+    id: context
+    attributes:
+      label: Relevant document or commit
+      description: Link to the repository page or identify the commit you are asking about.
