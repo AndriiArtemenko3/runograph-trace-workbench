@@ -1,18 +1,35 @@
-# RunoGraph
+# RunoGraph Trace Workbench
 
-RunoGraph is a local, offline workbench for importing and exploring execution
-traces from AI-assisted software work. It turns caller-produced JSONL events
-into four inspectable tables: runs, route steps, behavior clusters, and route
-edges. The React UI and CSV export use the same backend row builders.
+RunoGraph Trace Workbench is a local, offline full-stack workbench for importing
+and exploring execution traces from AI-assisted software work. It turns
+caller-produced JSONL events into four inspectable tables: runs, route steps,
+behavior clusters, and route edges. Its browser-based React UI and CSV export
+use the same backend row builders.
+
+`RunoGraph` remains the compact in-product brand; `Trace Workbench` names this
+repository and its deliberately bounded passive-analysis component.
 
 This repository is a pre-alpha prototype. It is intentionally scoped to
 passive ingestion and analysis: it does **not** run agents, execute trace
 content, sandbox commands, grade patches, or verify task outcomes.
 
-![RunoGraph Workbench showing six synthetic demo traces](docs/assets/runograph-workbench.jpg)
+![RunoGraph Trace Workbench showing six synthetic demo traces](docs/assets/runograph-workbench.jpg)
 
 The screenshot uses only the deterministic `demo-offline` fixture bundled with
 the repository; it contains no production or customer trace data.
+
+## Use cases
+
+- Compare batches of agent runs within one experiment using caller-reported
+  outcome, token, cost, and latency metadata.
+- Inspect file, tool, and test-event sequences plus aggregate route
+  transitions.
+- Find behaviorally similar runs and outliers without using outcome labels as
+  clustering features.
+- Pin a filtered cohort in the URL and export the same scoped tables with a
+  provenance manifest for further analysis.
+- Keep potentially sensitive trace analysis local instead of sending run data
+  to a hosted service.
 
 ## What the data means
 
@@ -33,6 +50,11 @@ reported pass/error rates and per-edge comparisons. See
 [Architecture and data flow](docs/ARCHITECTURE.md).
 
 ## Quick start
+
+The commands below document the local workflow for evaluators whose separate
+written agreement with the copyright holder permits them to run the software.
+Public repository visibility and this documentation do not grant execution
+rights; see [License](#license).
 
 Prerequisites:
 
@@ -167,8 +189,15 @@ used as path components directly.
 │   ├── scripts/           local ingest, demo seed, CSV export
 │   └── tests/
 ├── frontend/              React, TypeScript, Vite, Tailwind CSS
-└── docs/                  architecture and publication gates
+└── docs/                  architecture, evolution, CI policy, publication gates
 ```
+
+## Project evolution
+
+The current workbench is the result of a deliberate narrowing from an
+agent-running, graph-heavy prototype to passive local trace analysis. The
+[project evolution](docs/EVOLUTION.md) records the major pivots, the evidence
+for each stage, and why the current boundary is intentionally smaller.
 
 ## Verification
 
@@ -227,13 +256,6 @@ Dependabot review; see the explicit
   selection-to-scope when a selected legacy run ID cannot round-trip safely.
 - The bundled demo is synthetic. No production corpus or generated database is
   tracked in this repository.
-
-## Publication controls
-
-Public visibility does not make this proprietary code open source. Before any
-visibility change, use the [publication checklist](docs/PUBLICATION_CHECKLIST.md)
-to review legal intent, all advertised Git refs, Actions history, repository
-metadata, and the final synthetic-data preview.
 
 ## License
 

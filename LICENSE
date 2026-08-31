@@ -22,5 +22,7 @@ OR OTHER LIABILITY ARISING FROM THE USE OF THE SOFTWARE.
 
 Commercial licensing inquiries: andrii.art.design@gmail.com
 
-Note: code on the `legacy-cli` branch predates this license and remains
-under the MIT terms recorded in that branch's LICENSE file.
+Historical note: an earlier CLI snapshot was distributed separately under
+the MIT License. That snapshot and its license notice are preserved in a
+verified private archive; those MIT terms do not apply to the Software in
+this repository unless expressly stated otherwise.

@@ -45,10 +45,11 @@ current tree is clean.
   tags can keep older snapshots prominently reachable.
 - [x] Audit every advertised branch, not only `main`, and preserve excluded
   refs in a verified private archive.
-- [ ] Remove advertised refs excluded from the intended public set because
+- [x] Remove advertised refs excluded from the intended public set because
   they contain internal workflow material or a different product identity.
-  Branch deletion or history rewriting is a separate owner-authorized
-  operation.
+  The five legacy heads and the old tag were removed after verified archival;
+  the remote advertised only `main` and GitHub-managed PR reachability on
+  2026-08-31. Recheck the exact ref set immediately before visibility.
 - [x] Search all reachable commits for private paths, personal data, generated
   corpora/databases, proprietary third-party material, and stale credentials.
 - [x] The owner confirms that the historical sample contains no customer or
@@ -65,9 +66,11 @@ current tree is clean.
 - [x] The owner confirms that publishing the candidate's only tracked image
   asset, `docs/assets/runograph-workbench.jpg`, is intentional. It depicts the
   synthetic `demo-offline` fixture. Confirmed on 2026-08-31.
-- [ ] Verify ownership and redistribution rights for all other repository
-  material and dependency notices. The `LICENSE` file is unchanged and
-  controls use.
+- [x] Verify ownership and redistribution rights for all other repository
+  material and dependency notices. The owner confirmed the final rights gate on
+  2026-08-31; the current `LICENSE` controls use.
+- [x] The owner approved the exact archive-backed historical CLI note added in
+  `97d975a` during the trace-workbench consolidation on 2026-08-31.
 - [x] Preserve any separately licensed historical CLI snapshot in the private
   archive before deleting its public branch; keep the historical-license note
   accurate after cleanup.
@@ -85,8 +88,9 @@ Suggested topics:
 `ai-agents`, `observability`, `trace-analysis`, `offline-first`, `data-visualization`,
 `fastapi`, `react`, `sqlite`, `python`, `typescript`
 
-- [ ] Set the description and topics in GitHub only after owner approval.
-- [ ] Leave the homepage blank until there is an owner-approved public landing
+- [x] Set the owner-approved description and topics in GitHub. Verified on
+  2026-08-31; recheck them after the repository rename.
+- [x] Leave the homepage blank until there is an owner-approved public landing
   page or hosted demo; do not imply that the local-only app is a public SaaS.
 - [ ] Upload an owner-approved social preview derived from the synthetic demo.
   Check at small-card size and confirm that no local path, username, customer
@@ -99,14 +103,17 @@ Suggested topics:
 
 - [ ] Require the actual green CI checks on the default branch. Do not mark
   mypy required: strict mypy is not currently a repository gate.
-- [ ] Review security/contact settings, issue availability, and whether
-  contributions are accepted for this proprietary repository.
+- [x] Review security/contact settings, issue availability, and whether
+  contributions are accepted for this proprietary repository. Issues remain
+  enabled for guarded reports/questions; unsolicited pull requests are not
+  accepted without prior written agreement.
 - [ ] Verify the default branch, repository name, and product identity across
   branch content before changing visibility.
 - [ ] After publication, inspect the public repository as a signed-out user and
   verify README rendering, license visibility, branch exposure, social preview,
   and absence of unintended artifacts.
-- [ ] Inspect Actions history as well as Git refs; workflow-run pages can retain
-  references to commits from branches that were later deleted.
+- [x] Inspect Actions history as well as Git refs. The four legacy runs were
+  removed; the eight retained successful runs are on current-main/PR ancestry
+  and have no artifacts. Recheck the consolidation PR run before visibility.
 - [ ] Treat any release, deployment, tag, branch cleanup, or history rewrite as
   a separate reviewed action.
