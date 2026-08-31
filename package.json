@@ -4,9 +4,14 @@
   "license": "UNLICENSED",
   "version": "0.3.0-alpha.0",
   "type": "module",
+  "engines": {
+    "node": "24.20.0"
+  },
   "scripts": {
     "dev": "pnpm --filter frontend dev",
-    "build": "pnpm --filter frontend build"
+    "build": "pnpm --filter frontend build",
+    "demo:seed": "cd backend && uv run --frozen python -m scripts.seed_demo",
+    "demo:backend": "cd backend && RUNOGRAPH_DB_PATH=.runograph-demo/runograph.sqlite uv run --frozen uvicorn runograph_backend.main:app --reload"
   },
-  "packageManager": "pnpm@9.12.0"
+  "packageManager": "pnpm@11.25.0"
 }

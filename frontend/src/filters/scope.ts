@@ -15,6 +15,15 @@ export interface RunScope {
 /** Max run ids serializable in the hash before the URL gets fragile. */
 export const RUN_ID_SCOPE_CAP = 100;
 
+export function isPublicId(value: string): boolean {
+  return (
+    value.length >= 1 &&
+    value.length <= 128 &&
+    /^[A-Za-z0-9]/.test(value) &&
+    !/[^A-Za-z0-9._-]/.test(value)
+  );
+}
+
 export interface ParsedFilters {
   preds: Predicate[];
   invalid: string[];
@@ -36,7 +45,15 @@ export function parseMany(raw: string[]): ParsedFilters {
 }
 
 export function parseRunIds(raw: string | null): string[] | null {
-  if (!raw) return null;
-  const ids = raw.split(",").filter(Boolean);
-  return ids.length > 0 ? ids : null;
+  if (raw === null) return null;
+  const ids = raw.split(",");
+  if (ids.length === 0 || ids.some((id) => id.length === 0)) {
+    throw new Error("runs=: no run ids");
+  }
+  if (ids.some((id) => !isPublicId(id))) {
+    throw new Error(
+      "runs=: invalid run id; expected 1-128 ASCII letters, digits, '.', '_' or '-'",
+    );
+  }
+  return [...new Set(ids)];
 }

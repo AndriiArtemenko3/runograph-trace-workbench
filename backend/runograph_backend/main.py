@@ -1,15 +1,16 @@
-"""FastAPI entry point for the runograph-app backend.
+"""FastAPI entry point for the offline RunoGraph analysis backend.
 
-Serves aggregated agent-run data from the SQLite trace store to the React
-workbench. Tables are created idempotently on lifespan startup so a fresh
-`uvicorn` invocation works against an empty
-~/.runograph/runs/.../runograph.sqlite without an explicit migration step.
+Serves caller-provided trace metadata from SQLite to the React workbench.
+Tables are created idempotently on lifespan startup so a fresh `uvicorn`
+invocation works against an empty ~/.runograph/runograph.sqlite. Startup also
+marks pre-provenance legacy outcome rows as ``unknown``; it does not provide a
+general schema-migration framework.
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,17 +31,16 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="runograph-backend",
     version=__version__,
-    description="Sim engine + FastAPI surface for the desktop solver",
+    description="Read-only API over caller-provided offline trace data",
     lifespan=_lifespan,
 )
 
-# Vite dev server may bind to 5173 or auto-bump to the next free port if 5173
-# is held by another project — accept any localhost dev origin in 5170-5179
-# without re-listing every port. (Production builds are same-origin behind the
-# bundled FastAPI server, so CORS is dev-only.)
+# Vite may bind to 5173 or another port in its local development range. This
+# narrowly permits loopback origins on 5170-5179; FastAPI does not serve the
+# built SPA or define a production deployment topology.
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):51[0-9]{2}",
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1):517[0-9]",
     allow_methods=["*"],
     allow_headers=["*"],
 )

@@ -1,12 +1,11 @@
-"""Real-indicator metrics: cost, latency, tokens, pass rate, distribution
-stats (median, p95, std), z-scores against cluster baseline.
+"""Trace indicators and post-hoc imported-label summaries.
 
-Design principle: surface measurements an external observer can replicate
-from the raw run data, not synthesised abstractions. The previous
+Design principle: surface imported measurements and trace-derived counts an
+external observer can reproduce, not synthesised abstractions. Outcome,
+token totals, cost, and timestamps are supplied by the caller. The previous
 "efficiency / drift / loopiness / recovery / tool_discipline" set was
-hand-rolled and not auditable against industry conventions. This file
-matches what dashboards like Grafana o11y-bench, SWE-bench leaderboards,
-and DevOps p50/p95 latency panels report.
+hand-rolled and not auditable. This module keeps raw units and conventional
+distribution statistics instead.
 
 Three levels of aggregation:
 
@@ -16,8 +15,9 @@ Three levels of aggregation:
 
   2. group_stats(per_run_indicators)
      Distribution stats for a cluster or the whole experiment. For each
-     scalar field: mean, median, p95, std. Also pass_rate and
-     error_rate at the group level.
+     scalar field: mean, median, p95, std. Also reported_pass_rate and
+     reported_error_rate from stored labels at the group level. Provenance is
+     carried separately by the API/table layer.
 
   3. run_vs_cluster_z(run_ind, cluster_stats)
      Standard-score deltas: how many sigma this run is from the cluster
@@ -32,7 +32,6 @@ from datetime import datetime
 
 from runograph_backend.storage.schemas import CanonicalEvent
 
-
 # ----- helpers -----
 
 
@@ -44,8 +43,8 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
     if n == 1:
         return sorted_values[0]
     idx = max(0.0, min(n - 1, (n - 1) * pct))
-    lower = int(math.floor(idx))
-    upper = int(math.ceil(idx))
+    lower = math.floor(idx)
+    upper = math.ceil(idx)
     if lower == upper:
         return sorted_values[lower]
     frac = idx - lower
@@ -58,11 +57,11 @@ def _stddev(values: list[float], mean: float) -> float:
     return math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
 
 
-def _duration_s(started: datetime | None, ended: datetime | None) -> float:
+def _duration_s(started: datetime | None, ended: datetime | None) -> float | None:
     if not started or not ended:
-        return 0.0
+        return None
     delta = (ended - started).total_seconds()
-    return max(0.0, float(delta))
+    return float(delta) if delta >= 0 else None
 
 
 # ----- per-run -----
@@ -71,13 +70,18 @@ def _duration_s(started: datetime | None, ended: datetime | None) -> float:
 def run_indicators(
     *,
     outcome: str,
-    total_tokens: int | None,
-    total_cost_usd: float | None,
+    total_tokens: int,
+    total_cost_usd: float,
     started_at: datetime | None,
     ended_at: datetime | None,
     events: list[CanonicalEvent],
-) -> dict[str, float]:
-    """Pure scalar indicators for one run. Auditable against the Run row."""
+) -> dict[str, float | None]:
+    """Trace-derived counts plus imported run metadata.
+
+    ``reported_pass`` and ``reported_error`` mirror stored labels for post-hoc
+    summaries; they are not verification results. Provenance is emitted by
+    the caller-facing API/table layer.
+    """
     n_events = len(events)
     unique_targets = len({e.target for e in events if e.target})
     error_count = sum(1 for e in events if e.type == "error")
@@ -85,15 +89,15 @@ def run_indicators(
         1 for e in events if e.type in ("tool_call", "test_run")
     )
     return {
-        "cost_usd": float(total_cost_usd or 0.0),
-        "tokens_total": float(total_tokens or 0),
+        "cost_usd": float(total_cost_usd),
+        "tokens_total": float(total_tokens),
         "latency_s": _duration_s(started_at, ended_at),
         "event_count": float(n_events),
         "tool_call_count": float(tool_calls),
         "unique_targets": float(unique_targets),
         "error_count": float(error_count),
-        "passed": 1.0 if outcome == "pass" else 0.0,
-        "errored": 1.0 if outcome == "error" else 0.0,
+        "reported_pass": 1.0 if outcome == "pass" else 0.0,
+        "reported_error": 1.0 if outcome == "error" else 0.0,
     }
 
 
@@ -111,24 +115,35 @@ GROUP_DISTRIBUTION_FIELDS = (
 )
 
 
-def group_stats(per_run: list[dict[str, float]]) -> dict[str, float]:
+def group_stats(
+    per_run: list[dict[str, float | None]],
+) -> dict[str, float | None]:
     """Compute distribution stats (mean, median, p95, std) for the group.
 
-    Also surfaces n_runs, pass_rate, error_rate.
+    Also surfaces n_runs and rates from stored labels. Callers must pair those
+    values with the provenance emitted by the API/table layer.
     """
     if not per_run:
         return {}
     n = len(per_run)
-    out: dict[str, float] = {"n_runs": float(n)}
+    out: dict[str, float | None] = {"n_runs": float(n)}
 
-    passed = sum(m.get("passed", 0.0) for m in per_run)
-    errored = sum(m.get("errored", 0.0) for m in per_run)
-    out["pass_rate"] = passed / n
-    out["error_rate"] = errored / n
+    passed = sum(float(m.get("reported_pass") or 0.0) for m in per_run)
+    errored = sum(float(m.get("reported_error") or 0.0) for m in per_run)
+    out["reported_pass_rate"] = passed / n
+    out["reported_error_rate"] = errored / n
 
     for field in GROUP_DISTRIBUTION_FIELDS:
-        vals = sorted(float(m.get(field, 0.0)) for m in per_run)
-        mean = sum(vals) / n
+        vals = sorted(
+            float(value)
+            for metrics in per_run
+            if (value := metrics.get(field)) is not None
+        )
+        if not vals:
+            for suffix in ("mean", "median", "p95", "std", "min", "max"):
+                out[f"{field}_{suffix}"] = None
+            continue
+        mean = sum(vals) / len(vals)
         out[f"{field}_mean"] = mean
         out[f"{field}_median"] = _percentile(vals, 0.5)
         out[f"{field}_p95"] = _percentile(vals, 0.95)
@@ -146,15 +161,18 @@ Z_SCORE_FIELDS = ("cost_usd", "tokens_total", "latency_s", "event_count")
 
 
 def run_vs_cluster_z(
-    run_ind: dict[str, float],
-    cluster_stats: dict[str, float],
-) -> dict[str, float]:
+    run_ind: dict[str, float | None],
+    cluster_stats: dict[str, float | None],
+) -> dict[str, float | None]:
     """Z-score of this run on each headline scalar against the cluster
     distribution. Returns 0.0 when the cluster has insufficient spread."""
-    out: dict[str, float] = {}
+    out: dict[str, float | None] = {}
     for field in Z_SCORE_FIELDS:
-        mean = cluster_stats.get(f"{field}_mean", 0.0)
-        std = cluster_stats.get(f"{field}_std", 0.0)
-        v = run_ind.get(field, 0.0)
-        out[f"{field}_z"] = (v - mean) / std if std > 1e-9 else 0.0
+        mean = cluster_stats.get(f"{field}_mean")
+        std = cluster_stats.get(f"{field}_std")
+        value = run_ind.get(field)
+        if value is None or mean is None or std is None:
+            out[f"{field}_z"] = None
+        else:
+            out[f"{field}_z"] = (value - mean) / std if std > 1e-9 else 0.0
     return out

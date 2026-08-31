@@ -1,12 +1,13 @@
 {
   "runId": "sample-run-0001",
-  "taskId": "pylint-dev__pylint-7993",
-  "model": "claude-sonnet-4-6",
+  "taskId": "synthetic-format-task",
+  "model": "fixture-model",
   "startedAt": "2026-05-20T14:00:00Z",
   "endedAt": "2026-05-20T14:02:17Z",
   "outcome": "pass",
+  "outcomeSource": "external",
   "totalTokens": 11842,
   "totalCostUsd": 0.12,
   "experimentId": "fixture-test",
-  "settingsHash": "sha256:deadbeef"
+  "settingsHash": "synthetic-fixture-v1"
 }

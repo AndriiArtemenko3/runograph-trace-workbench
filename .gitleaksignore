@@ -1,0 +1,3 @@
+# Historical static table-column descriptor; the matched `key` value is a
+# public schema field name, not a credential.
+36c8344228705a4043e35ea2843506cf38202207:frontend/src/pages/Workbench.tsx:generic-api-key:59

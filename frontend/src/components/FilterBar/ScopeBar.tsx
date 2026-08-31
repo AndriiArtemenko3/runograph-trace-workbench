@@ -29,7 +29,7 @@ export function ScopeBar({
   }
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border-hairline bg-bg-sunken px-6 py-2">
-      <span className="font-mono text-xs text-text-tertiary">SCOPE</span>
+      <span className="font-mono text-xs text-text-secondary">SCOPE</span>
       {predicates.map((p, i) => (
         <button
           key={`${predicateLabel(p)}-${i}`}
@@ -58,7 +58,7 @@ export function ScopeBar({
         </button>
       )}
       {matchedCount !== null && (
-        <span className="font-mono text-xs text-text-tertiary">
+        <span className="font-mono text-xs text-text-secondary">
           → {matchedCount} runs
         </span>
       )}

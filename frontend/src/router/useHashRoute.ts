@@ -8,6 +8,7 @@ export type SheetView = "runs" | "steps" | "clusters" | "edges";
  *  `s=` (run-scope predicates) and `runs=` (selection whitelist) persist
  *  across sheets. */
 export interface HashParams {
+  experiment: string | null;
   f: string[];
   s: string[];
   runs: string | null;
@@ -51,12 +52,18 @@ function parseHash(): { view: SheetView; params: HashParams } {
   const sp = new URLSearchParams(query);
   return {
     view: ROUTES[path] ?? "runs",
-    params: { f: sp.getAll("f"), s: sp.getAll("s"), runs: sp.get("runs") },
+    params: {
+      experiment: sp.get("experiment"),
+      f: sp.getAll("f"),
+      s: sp.getAll("s"),
+      runs: sp.get("runs"),
+    },
   };
 }
 
 function buildHash(view: SheetView, params: HashParams): string {
   const parts: string[] = [];
+  if (params.experiment) parts.push(`experiment=${enc(params.experiment)}`);
   for (const f of params.f) parts.push(`f=${enc(f)}`);
   for (const s of params.s) parts.push(`s=${enc(s)}`);
   if (params.runs) parts.push(`runs=${enc(params.runs)}`);
@@ -75,6 +82,7 @@ export function useHashRoute(): [
   HashParams,
   (v: SheetView) => void,
   (patch: Partial<HashParams>) => void,
+  (patch: Partial<HashParams>) => void,
 ] {
   const [state, setState] = useState(parseHash);
 
@@ -85,10 +93,15 @@ export function useHashRoute(): [
     return () => window.removeEventListener("hashchange", onChange);
   }, []);
 
-  const apply = (view: SheetView, params: HashParams) => {
+  const apply = (view: SheetView, params: HashParams, replace = false) => {
     const target = buildHash(view, params);
     if (window.location.hash !== target) {
-      window.location.hash = target;
+      if (replace) {
+        window.history.replaceState(window.history.state, "", target);
+        setState(parseHash());
+      } else {
+        window.location.hash = target;
+      }
     }
   };
 
@@ -100,5 +113,9 @@ export function useHashRoute(): [
     apply(state.view, { ...state.params, ...patch });
   };
 
-  return [state.view, state.params, navigate, setParams];
+  const replaceParams = (patch: Partial<HashParams>) => {
+    apply(state.view, { ...state.params, ...patch }, true);
+  };
+
+  return [state.view, state.params, navigate, setParams, replaceParams];
 }

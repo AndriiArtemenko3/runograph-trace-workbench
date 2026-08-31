@@ -3,7 +3,8 @@
  *
  * Wire form: "column:op:value[,value...]" — a filter list is an AND.
  * The two evaluators share golden test vectors (predicate.test.ts /
- * test_run_filter.py); change them in lockstep.
+ * test_run_filter.py); change them in lockstep. `contains` folds ASCII letters
+ * only, leaving non-ASCII code points exact for deterministic Python/JS parity.
  */
 
 export type Op =
@@ -39,6 +40,14 @@ export const ROUTE_PSEUDO_OPS: Record<string, Op[]> = {
 };
 
 export const EDGE_SEPARATOR = ">";
+const DECIMAL_NUMBER_PATTERN =
+  /^[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?$/;
+
+export function asciiFold(value: string): string {
+  return value.replace(/[A-Z]/g, (char) =>
+    String.fromCharCode(char.charCodeAt(0) + 32),
+  );
+}
 
 const ALL_OPS = new Set<string>(Object.values(KIND_OPS).flat());
 const SINGLE_VALUE_OPS = new Set<Op>([
@@ -76,6 +85,47 @@ export function parsePredicate(raw: string): Predicate {
   return { column, op: op as Op, values };
 }
 
+export function validatePredicate(
+  p: Predicate,
+  kinds: Record<string, ColumnKind>,
+  allowRoutePseudo = false,
+): void {
+  const routeOps = allowRoutePseudo ? ROUTE_PSEUDO_OPS[p.column] : undefined;
+  if (routeOps) {
+    if (!routeOps.includes(p.op)) {
+      throw new Error(`filter column '${p.column}': op '${p.op}' not allowed`);
+    }
+    if (p.column === "route.edge") {
+      const parts = p.values[0]?.split(EDGE_SEPARATOR) ?? [];
+      if (parts.length !== 2 || parts.some((part) => part.length === 0)) {
+        throw new Error("filter column 'route.edge': expected source>target");
+      }
+    }
+    return;
+  }
+
+  const kind = kinds[p.column];
+  if (!kind) throw new Error(`filter column '${p.column}': unknown column`);
+  if (!KIND_OPS[kind].includes(p.op)) {
+    throw new Error(`filter column '${p.column}' (${kind}): op '${p.op}' not allowed`);
+  }
+  if (
+    kind === "number" &&
+    p.values.some(
+      (value) =>
+        !DECIMAL_NUMBER_PATTERN.test(value) || !Number.isFinite(Number(value)),
+    )
+  ) {
+    throw new Error(`filter column '${p.column}': non-numeric value`);
+  }
+  if (
+    kind === "boolean" &&
+    p.values.some((value) => !["true", "false", "1", "0"].includes(value.toLowerCase()))
+  ) {
+    throw new Error(`filter column '${p.column}': non-boolean value`);
+  }
+}
+
 export function serializePredicate(p: Predicate): string {
   return `${p.column}:${p.op}:${p.values.join(",")}`;
 }
@@ -84,12 +134,12 @@ export function predicatesEqual(a: Predicate, b: Predicate): boolean {
   return serializePredicate(a) === serializePredicate(b);
 }
 
-function toNumber(v: unknown): number {
-  if (typeof v === "number") return v;
-  if (v === null || v === undefined || v === false || v === "") return 0;
-  if (v === true) return 1;
-  const n = Number(v);
-  return Number.isNaN(n) ? 0 : n;
+function toNumber(v: unknown): number | null {
+  if (v === null || v === undefined || v === "" || typeof v === "boolean") {
+    return null;
+  }
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 export function predicateMatches(
@@ -100,6 +150,7 @@ export function predicateMatches(
   if (kind === "number") {
     const v = toNumber(rowValue);
     const nums = p.values.map((x) => Number(x));
+    if (v === null || nums.some((value) => !Number.isFinite(value))) return false;
     switch (p.op) {
       case "gt":
         return v > nums[0]!;
@@ -132,7 +183,7 @@ export function predicateMatches(
     case "in":
       return p.values.includes(sval);
     case "contains":
-      return sval.toLowerCase().includes(p.values[0]!.toLowerCase());
+      return asciiFold(sval).includes(asciiFold(p.values[0]!));
     default:
       return false;
   }

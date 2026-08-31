@@ -1,5 +1,9 @@
 import { useFetched } from "./routes";
-import type { AsyncState } from "./routes";
+import type {
+  AsyncState,
+  OutcomeLabelSource,
+  StoredOutcomeSource,
+} from "./routes";
 import type { SheetView } from "../router";
 
 /** Row shapes mirror the snake_case column constants in
@@ -11,9 +15,10 @@ export interface RunRow {
   task_id: string;
   model: string;
   outcome: string;
+  outcome_source: StoredOutcomeSource;
   total_tokens: number;
   total_cost_usd: number;
-  latency_s: number;
+  latency_s: number | null;
   event_count: number;
   tool_call_count: number;
   unique_targets: number;
@@ -23,7 +28,7 @@ export interface RunRow {
   is_representative: boolean;
   cost_usd_z: number;
   tokens_total_z: number;
-  latency_s_z: number;
+  latency_s_z: number | null;
   event_count_z: number;
 }
 
@@ -40,32 +45,35 @@ export interface ClusterRow {
   cluster_id: number;
   n_runs: number;
   representative_run_id: string;
-  pass_rate: number;
-  error_rate: number;
-  cost_usd_mean: number;
-  cost_usd_median: number;
-  cost_usd_p95: number;
-  cost_usd_std: number;
-  tokens_total_mean: number;
-  tokens_total_median: number;
-  tokens_total_p95: number;
-  tokens_total_std: number;
-  latency_s_mean: number;
-  latency_s_median: number;
-  latency_s_p95: number;
-  latency_s_std: number;
-  event_count_mean: number;
-  event_count_median: number;
-  event_count_p95: number;
-  event_count_std: number;
+  outcome_label_source: OutcomeLabelSource;
+  reported_pass_rate: number | null;
+  reported_error_rate: number | null;
+  cost_usd_mean: number | null;
+  cost_usd_median: number | null;
+  cost_usd_p95: number | null;
+  cost_usd_std: number | null;
+  tokens_total_mean: number | null;
+  tokens_total_median: number | null;
+  tokens_total_p95: number | null;
+  tokens_total_std: number | null;
+  latency_s_mean: number | null;
+  latency_s_median: number | null;
+  latency_s_p95: number | null;
+  latency_s_std: number | null;
+  event_count_mean: number | null;
+  event_count_median: number | null;
+  event_count_p95: number | null;
+  event_count_std: number | null;
 }
 
 export interface EdgeRow {
   source: string;
   target: string;
   count: number;
-  pass_count: number;
-  fail_count: number;
+  outcome_label_source: OutcomeLabelSource;
+  reported_pass_count: number;
+  reported_fail_count: number;
+  reported_error_count: number;
   total_time_seconds: number;
 }
 

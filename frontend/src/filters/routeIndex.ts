@@ -5,7 +5,7 @@
  */
 
 import type { StepRow } from "../api/tables";
-import { EDGE_SEPARATOR } from "./predicate";
+import { asciiFold, EDGE_SEPARATOR } from "./predicate";
 import type { Predicate } from "./predicate";
 
 export interface RouteIndex {
@@ -50,8 +50,8 @@ export function routePredicateMatches(
   if (p.column === "route.target") {
     const targets = idx.targetsByRun.get(runId) ?? [];
     if (p.op === "eq") return targets.includes(p.values[0]!);
-    const needle = p.values[0]!.toLowerCase();
-    return targets.some((t) => t.toLowerCase().includes(needle));
+    const needle = asciiFold(p.values[0]!);
+    return targets.some((target) => asciiFold(target).includes(needle));
   }
   if (p.column === "route.event_type") {
     const types = idx.typesByRun.get(runId);

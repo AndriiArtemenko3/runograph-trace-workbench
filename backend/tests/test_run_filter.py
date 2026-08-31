@@ -7,7 +7,7 @@ same cases. Change them in lockstep.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -97,6 +97,17 @@ def test_row_matches_truth_table(overrides, raw, expected):
     assert run_filter.row_matches(row, preds, kinds) is expected
 
 
+@pytest.mark.parametrize(
+    "needle,expected",
+    [("STRASSE", False), ("STRAße", True), ("straße", True)],
+)
+def test_contains_uses_ascii_only_case_folding(needle, expected):
+    predicate = run_filter.parse_filter(f"target:contains:{needle}")
+    assert run_filter.row_matches(
+        {"target": "Straße.py"}, [predicate], {"target": "string"}
+    ) is expected
+
+
 def test_validate_rejects_unknown_column_and_kind_mismatch():
     kinds = tables.COLUMN_KINDS["runs"]
     with pytest.raises(ValueError):
@@ -111,6 +122,33 @@ def test_validate_rejects_unknown_column_and_kind_mismatch():
         run_filter.validate_predicates(
             [run_filter.parse_filter("route.edge:contains:x")], kinds
         )
+    with pytest.raises(ValueError):  # malformed route edge
+        run_filter.validate_predicates(
+            [run_filter.parse_filter("route.edge:eq:missing-target")], kinds
+        )
+    with pytest.raises(ValueError):  # non-finite values are not measurements
+        run_filter.validate_predicates(
+            [run_filter.parse_filter("total_tokens:eq:nan")], kinds
+        )
+    for not_decimal in (
+        " ",
+        "0x10",
+        "1_000",
+        "\u0661\u0660",
+        "\uff11\uff12",
+        "\U0001d7d9\U0001d7d8",
+        "\u0967\u0966",
+    ):
+        with pytest.raises(ValueError):
+            run_filter.validate_predicates(
+                [run_filter.parse_filter(f"total_tokens:eq:{not_decimal}")], kinds
+            )
+    for not_boolean in ("maybe", "fal\u017fe"):
+        with pytest.raises(ValueError):  # boolean values are ASCII typed
+            run_filter.validate_predicates(
+                [run_filter.parse_filter(f"is_representative:eq:{not_boolean}")],
+                kinds,
+            )
 
 
 # ----- route predicates + scoping over fabricated experiment data -----
@@ -119,7 +157,7 @@ def test_validate_rejects_unknown_column_and_kind_mismatch():
 def _evt(i: int, type_: str, target: str | None) -> CanonicalEvent:
     return CanonicalEvent(
         event_id=f"e{i:03d}",
-        timestamp=datetime(2026, 1, 1, 0, 0, i),
+        timestamp=datetime(2026, 1, 1, 0, 0, i, tzinfo=UTC),
         type=type_,
         target=target,
         content_summary="",
@@ -134,6 +172,7 @@ def _fake_data() -> tables.ExperimentData:
         "r-a": [_evt(1, "file_read", "a.py"), _evt(2, "file_edit", "b.py")],
         "r-b": [_evt(1, "file_read", "a.py"), _evt(2, "error", "c.py")],
         "r-c": [],
+        "r-u": [_evt(1, "file_read", "Straße.py")],
     }
     runs = [
         SimpleNamespace(id=rid, outcome="pass") for rid in events_by_run
@@ -155,6 +194,8 @@ def _run_rows(data: tables.ExperimentData) -> list[dict]:
         ("route.event_type:in:error", {"r-b"}),
         ("route.edge:eq:a.py>b.py", {"r-a"}),
         ("route.edge:eq:b.py>a.py", set()),
+        ("route.target:contains:STRASSE", set()),
+        ("route.target:contains:STRAße", {"r-u"}),
     ],
 )
 def test_route_predicates(raw, expected):

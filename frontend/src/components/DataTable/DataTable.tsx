@@ -28,6 +28,9 @@ interface DataTableProps<T> {
   getRowId?: (row: T) => string;
 }
 
+const EMPTY_GROUPING: string[] = [];
+const EMPTY_ROW_SELECTION: RowSelectionState = {};
+
 /**
  * Generic sortable/filterable table over TanStack Table. Click a header to
  * sort; the text box filters across all columns; optional grouping renders
@@ -37,7 +40,7 @@ interface DataTableProps<T> {
 export function DataTable<T>({
   data,
   columns,
-  grouping = [],
+  grouping = EMPTY_GROUPING,
   rowSelection,
   onRowSelectionChange,
   getRowId,
@@ -79,7 +82,7 @@ export function DataTable<T>({
       globalFilter,
       expanded,
       grouping,
-      rowSelection: rowSelection ?? {},
+      rowSelection: rowSelection ?? EMPTY_ROW_SELECTION,
     },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
@@ -105,11 +108,20 @@ export function DataTable<T>({
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
           placeholder="filter…"
-          className="w-64 rounded border border-border-hairline bg-bg-sunken px-2 py-1 font-mono text-sm text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+          className="w-64 rounded border border-border-hairline bg-bg-sunken px-2 py-1 font-mono text-sm text-text-primary placeholder:text-text-secondary focus:border-border-strong focus:outline-none"
         />
-        <span className="font-mono text-xs text-text-tertiary">
+        <span className="font-mono text-xs text-text-secondary">
           {table.getFilteredRowModel().rows.length} rows
         </span>
+        {globalFilter && rows.length === 0 && (
+          <button
+            type="button"
+            onClick={() => setGlobalFilter("")}
+            className="rounded border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary hover:text-text-primary"
+          >
+            clear table filter
+          </button>
+        )}
       </div>
       <div className="overflow-auto rounded border border-border-hairline">
         <table className="w-full border-collapse text-sm">
@@ -135,6 +147,16 @@ export function DataTable<T>({
             ))}
           </thead>
           <tbody>
+            {rows.length === 0 && (
+              <tr className="bg-bg-panel">
+                <td
+                  colSpan={table.getVisibleLeafColumns().length}
+                  className="px-3 py-6 text-center font-mono text-xs text-text-secondary"
+                >
+                  No rows match the table filter.
+                </td>
+              </tr>
+            )}
             {rows.map((row, i) => (
               <tr
                 key={row.id}
@@ -156,7 +178,7 @@ export function DataTable<T>({
                         >
                           {row.getIsExpanded() ? "▾" : "▸"}{" "}
                           {String(cell.getValue())}{" "}
-                          <span className="text-text-tertiary">
+                          <span className="text-text-secondary">
                             ({row.subRows.length})
                           </span>
                         </button>

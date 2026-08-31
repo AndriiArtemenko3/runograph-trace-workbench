@@ -3,8 +3,8 @@ import type { Config } from "tailwindcss";
 /**
  * Tailwind theme bound to the CSS variables in src/styles/tokens.css.
  *
- * Every token name in the Figma collection ("RunoGraph Tokens") has a Tailwind
- * alias here. Components consume tokens via these aliases (bg-bg-canvas,
+ * Every design token has a Tailwind alias here. Components consume tokens via
+ * these aliases (bg-bg-canvas,
  * text-text-primary, heat-productivity-500, etc.) — never via hex literals.
  *
  * Colors are bound as `rgb(var(--rg-X) / <alpha-value>)` so Tailwind's opacity
@@ -12,8 +12,8 @@ import type { Config } from "tailwindcss";
  * real alpha against the channel-form variables declared in tokens.css.
  * Solid utilities keep working because `<alpha-value>` defaults to `1`.
  *
- * The shape mirrors the Figma variable groups (bg/text/border/accent/heat/
- * status/font/size/lineHeight/space/radius) so the design system maps 1:1.
+ * The shape mirrors the design-system groups (bg/text/border/accent/heat/
+ * status/font/size/lineHeight/space/radius).
  */
 const rgb = (token: string) => `rgb(var(${token}) / <alpha-value>)`;
 

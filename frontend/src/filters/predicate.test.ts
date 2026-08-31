@@ -12,6 +12,7 @@ import {
   percentile,
   predicateMatches,
   serializePredicate,
+  validatePredicate,
 } from "./predicate";
 import type { ColumnKind } from "./predicate";
 
@@ -40,6 +41,7 @@ const RUN_KINDS: Record<string, ColumnKind> = {
   task_id: "string",
   model: "enum",
   outcome: "enum",
+  outcome_source: "enum",
   total_tokens: "number",
   total_cost_usd: "number",
   latency_s: "number",
@@ -123,6 +125,55 @@ describe("predicateMatches truth table", () => {
     expect(compilePredicates(preds, RUN_KINDS)(BASE_ROW)).toBe(false);
     preds[1] = parsePredicate("total_tokens:gte:10000");
     expect(compilePredicates(preds, RUN_KINDS)(BASE_ROW)).toBe(true);
+  });
+
+  it("does not coerce unknown measurements to observed zero", () => {
+    const pred = parsePredicate("latency_s:eq:0");
+    expect(predicateMatches(null, pred, "number")).toBe(false);
+    expect(predicateMatches(undefined, pred, "number")).toBe(false);
+    expect(predicateMatches("not-a-number", pred, "number")).toBe(false);
+  });
+
+  it.each([
+    ["STRASSE", false],
+    ["STRAße", true],
+    ["straße", true],
+  ])("uses ASCII-only case folding for contains %s", (needle, expected) => {
+    const pred = parsePredicate(`target:contains:${needle}`);
+    expect(predicateMatches("Straße.py", pred, "string")).toBe(expected);
+  });
+});
+
+describe("semantic validation (backend parity)", () => {
+  it.each([
+    "nope:eq:1",
+    "outcome:gte:1",
+    "total_tokens:gte:abc",
+    "total_tokens:eq:nan",
+    "total_tokens:eq: ",
+    "total_tokens:eq:0x10",
+    "total_tokens:eq:1_000",
+    "total_tokens:eq:١٠",
+    "total_tokens:eq:１２",
+    "total_tokens:eq:𝟙𝟘",
+    "total_tokens:eq:१०",
+    "is_representative:eq:maybe",
+    "is_representative:eq:falſe",
+    "route.edge:contains:x",
+    "route.edge:eq:missing-target",
+  ])("rejects %s", (raw) => {
+    expect(() => validatePredicate(parsePredicate(raw), RUN_KINDS, true)).toThrow();
+  });
+
+  it("rejects route pseudo-columns outside run scope", () => {
+    expect(() =>
+      validatePredicate(parsePredicate("route.target:eq:a.py"), RUN_KINDS),
+    ).toThrow();
+  });
+
+  it("accepts typed run and route predicates", () => {
+    validatePredicate(parsePredicate("total_tokens:gte:1"), RUN_KINDS, true);
+    validatePredicate(parsePredicate("route.edge:eq:a.py>b.py"), RUN_KINDS, true);
   });
 });
 

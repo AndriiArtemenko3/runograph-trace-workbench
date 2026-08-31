@@ -11,7 +11,9 @@ Wire form:  "column:op:value[,value...]"   e.g.  outcome:in:fail,error
 
 Semantics: a filter list is a conjunction (AND). `in` provides OR within a
 column. Values are untyped strings coerced at evaluation time against a
-column-kind registry (analysis.tables.COLUMN_KINDS).
+column-kind registry (analysis.tables.COLUMN_KINDS). `contains` folds ASCII
+letters only; non-ASCII code points remain exact so Python and JavaScript have
+the same deterministic behavior without locale-dependent Unicode case rules.
 
 Run-scoped pseudo-columns (valid only when computing a run set):
 
@@ -22,11 +24,14 @@ Run-scoped pseudo-columns (valid only when computing a run set):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from itertools import pairwise
+from math import isfinite
 
 from runograph_backend.analysis import route_graph as rg_mod
 from runograph_backend.analysis import tables as tables_mod
-from runograph_backend.storage.schemas import CanonicalEvent
+from runograph_backend.storage.schemas import CanonicalEvent, is_public_id
 
 # op set per column kind
 KIND_OPS: dict[str, frozenset[str]] = {
@@ -49,6 +54,17 @@ ROUTE_PSEUDO_OPS: dict[str, frozenset[str]] = {
 }
 
 EDGE_SEPARATOR = ">"
+_DECIMAL_NUMBER_RE = re.compile(
+    r"^[+-]?(?:(?:[0-9]+(?:\.[0-9]*)?)|(?:\.[0-9]+))(?:[eE][+-]?[0-9]+)?$"
+)
+_ASCII_CASE_TRANSLATION = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"
+)
+
+
+def _ascii_fold(value: str) -> str:
+    """Fold ASCII letters only, identically to the TypeScript evaluator."""
+    return value.translate(_ASCII_CASE_TRANSLATION)
 
 
 @dataclass(frozen=True)
@@ -88,9 +104,16 @@ def parse_run_whitelist(raw: str | None) -> set[str] | None:
     """Parse the runs= csv whitelist. None means "no whitelist"."""
     if raw is None:
         return None
-    ids = {r.strip() for r in raw.split(",") if r.strip()}
-    if not ids:
+    parts = raw.split(",")
+    if not parts or any(not part for part in parts):
         raise ValueError("runs=: no run ids")
+    ids = set(parts)
+    invalid = sorted(run_id for run_id in ids if not is_public_id(run_id))
+    if invalid:
+        raise ValueError(
+            "runs=: invalid run id; expected 1-128 ASCII letters, digits, '.', "
+            "'_' or '-' with an alphanumeric first character"
+        )
     return ids
 
 
@@ -104,6 +127,12 @@ def validate_predicates(preds: list[Predicate], kinds: dict[str, str]) -> None:
         if p.column in ROUTE_PSEUDO_OPS:
             if p.op not in ROUTE_PSEUDO_OPS[p.column]:
                 raise ValueError(f"filter column {p.column!r}: op {p.op!r} not allowed")
+            if p.column == "route.edge":
+                parts = p.values[0].split(EDGE_SEPARATOR)
+                if len(parts) != 2 or not all(parts):
+                    raise ValueError(
+                        "filter column 'route.edge': expected source>target"
+                    )
             continue
         kind = kinds.get(p.column)
         if kind is None:
@@ -114,15 +143,23 @@ def validate_predicates(preds: list[Predicate], kinds: dict[str, str]) -> None:
             )
         if kind == "number":
             for v in p.values:
+                if _DECIMAL_NUMBER_RE.fullmatch(v) is None:
+                    raise ValueError(
+                        f"filter column {p.column!r}: non-numeric value {v!r}"
+                    )
                 try:
-                    float(v)
+                    parsed = float(v)
                 except ValueError:
                     raise ValueError(
                         f"filter column {p.column!r}: non-numeric value {v!r}"
                     ) from None
+                if not isfinite(parsed):
+                    raise ValueError(
+                        f"filter column {p.column!r}: non-finite value {v!r}"
+                    )
         elif kind == "boolean":
             for v in p.values:
-                if v.casefold() not in ("true", "false", "1", "0"):
+                if _ascii_fold(v) not in ("true", "false", "1", "0"):
                     raise ValueError(
                         f"filter column {p.column!r}: non-boolean value {v!r}"
                     )
@@ -130,7 +167,9 @@ def validate_predicates(preds: list[Predicate], kinds: dict[str, str]) -> None:
 
 def _matches_one(row_value: object, p: Predicate, kind: str) -> bool:
     if kind == "number":
-        v = float(row_value or 0.0)
+        if row_value is None:
+            return False
+        v = float(row_value)
         nums = [float(x) for x in p.values]
         if p.op == "gt":
             return v > nums[0]
@@ -149,7 +188,7 @@ def _matches_one(row_value: object, p: Predicate, kind: str) -> bool:
             return abs(v) >= nums[0]
         return False
     if kind == "boolean":
-        want = p.values[0].casefold() in ("true", "1")
+        want = _ascii_fold(p.values[0]) in ("true", "1")
         return bool(row_value) == want
     # enum / string
     sval = str(row_value)
@@ -158,7 +197,7 @@ def _matches_one(row_value: object, p: Predicate, kind: str) -> bool:
     if p.op == "in":
         return sval in p.values
     if p.op == "contains":
-        return p.values[0].casefold() in sval.casefold()
+        return _ascii_fold(p.values[0]) in _ascii_fold(sval)
     return False
 
 
@@ -172,14 +211,15 @@ def _route_matches(events: list[CanonicalEvent], p: Predicate) -> bool:
     if p.column == "route.target":
         if p.op == "eq":
             return any((e.target or "") == p.values[0] for e in route)
-        return any(p.values[0].casefold() in (e.target or "").casefold() for e in route)
+        needle = _ascii_fold(p.values[0])
+        return any(needle in _ascii_fold(e.target or "") for e in route)
     if p.column == "route.event_type":
         wanted = set(p.values)
         return any(e.type in wanted for e in route)
     # route.edge
     src, _, dst = p.values[0].partition(EDGE_SEPARATOR)
     seq = [e.target for e in route if e.target]
-    return any(a == src and b == dst for a, b in zip(seq, seq[1:], strict=False))
+    return any(a == src and b == dst for a, b in pairwise(seq))
 
 
 def scoped_run_ids(

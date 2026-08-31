@@ -18,6 +18,7 @@ const STEPS: StepRow[] = [
   step("r-a", 1, "file_edit", "b.py"),
   step("r-b", 0, "file_read", "a.py"),
   step("r-b", 1, "error", "c.py"),
+  step("r-u", 0, "file_read", "Straße.py"),
 ];
 
 const CASES: [string, string[]][] = [
@@ -26,13 +27,15 @@ const CASES: [string, string[]][] = [
   ["route.event_type:in:error", ["r-b"]],
   ["route.edge:eq:a.py>b.py", ["r-a"]],
   ["route.edge:eq:b.py>a.py", []],
+  ["route.target:contains:STRASSE", []],
+  ["route.target:contains:STRAße", ["r-u"]],
 ];
 
 describe("routeIndex", () => {
   const idx = buildRouteIndex(STEPS);
   it.each(CASES)("%s matches %o", (raw, expected) => {
     const p = parsePredicate(raw);
-    const matched = ["r-a", "r-b"].filter((rid) =>
+    const matched = ["r-a", "r-b", "r-u"].filter((rid) =>
       routePredicateMatches(idx, rid, p),
     );
     expect(matched).toEqual(expected);

@@ -7,7 +7,6 @@ import json
 import shutil
 from pathlib import Path
 
-import pytest
 import pytest_asyncio
 
 FIXTURE_RUN = Path(__file__).parent / "fixtures" / "sample-run"
@@ -27,8 +26,8 @@ async def ingest_run_variant(session, tmp_path: Path, run_id: str, outcome: str)
     return await ingest_run(session, dst)
 
 
-@pytest.fixture(autouse=True)
-def _isolate_db(tmp_path, monkeypatch):
+@pytest_asyncio.fixture(autouse=True)
+async def _isolate_db(tmp_path, monkeypatch):
     """Each test gets its own ~/.runograph database in a tmpdir."""
     db_path = tmp_path / "runograph-test.sqlite"
     monkeypatch.setenv("RUNOGRAPH_DB_PATH", str(db_path))
@@ -39,6 +38,7 @@ def _isolate_db(tmp_path, monkeypatch):
 
     importlib.reload(db_mod)
     yield db_path
+    await db_mod.engine.dispose()
 
 
 @pytest_asyncio.fixture

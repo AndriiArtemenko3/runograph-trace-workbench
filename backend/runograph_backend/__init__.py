@@ -1,6 +1,3 @@
-"""runograph-app backend.
-
-Sim engine + FastAPI surface for the desktop solver app.
-"""
+"""Offline trace ingestion and analysis backend for RunoGraph."""
 
 __version__ = "0.3.0a0"

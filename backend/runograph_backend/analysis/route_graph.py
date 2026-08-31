@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 from runograph_backend.storage.schemas import CanonicalEvent
 
@@ -59,12 +60,12 @@ class GraphEdge:
     target: str
     count: int = 0
     total_time_seconds: float = 0.0
-    # Conformance counts — populated only when build_aggregate_graph is called
-    # with outcomes_by_run. Granularity is RUNS (not transitions): each run
-    # that traversed this edge contributes 1 to pass_count or fail_count
-    # depending on the run's terminal outcome.
-    pass_count: int = 0
-    fail_count: int = 0
+    # Post-hoc imported-label counts. Granularity is runs (not transitions):
+    # each run that traversed this edge contributes once according to the
+    # terminal outcome imported with that trace.
+    reported_pass_count: int = 0
+    reported_fail_count: int = 0
+    reported_error_count: int = 0
 
 
 @dataclass
@@ -75,9 +76,17 @@ class RouteGraph:
     run_count: int = 1
 
 
-def _slug(target: str) -> str:
-    """Compress a target string to a deterministic node id."""
-    return target.replace("/", "_").replace(" ", "_").replace(":", "_")[:120]
+def _target_id(target: str) -> str:
+    """Return the lossless graph identity for a target.
+
+    A display slug cannot be an identity: punctuation replacement and
+    truncation merge distinct targets (for example ``a/b`` and ``a_b``),
+    which can also turn a real transition into a false self-edge.  Targets
+    are already strings in the public graph contract, so retaining the full
+    value is the only collision-free mapping.  Presentation layers may
+    derive a shorter label without changing this id.
+    """
+    return target
 
 
 def events_to_route(events: list[CanonicalEvent]) -> list[CanonicalEvent]:
@@ -98,7 +107,7 @@ def build_run_graph(events: list[CanonicalEvent]) -> RouteGraph:
 
     nodes_by_id: dict[str, GraphNode] = {}
     for evt in route:
-        node_id = _slug(evt.target or "")
+        node_id = _target_id(evt.target or "")
         if node_id not in nodes_by_id:
             nodes_by_id[node_id] = GraphNode(
                 id=node_id,
@@ -115,20 +124,20 @@ def build_run_graph(events: list[CanonicalEvent]) -> RouteGraph:
 
     edge_counter: Counter[tuple[str, str]] = Counter()
     edge_time: dict[tuple[str, str], float] = defaultdict(float)
-    for prev, curr in zip(route, route[1:], strict=False):
+    for prev, curr in pairwise(route):
         if not prev.target or not curr.target:
             continue
-        key = (_slug(prev.target), _slug(curr.target))
+        key = (_target_id(prev.target), _target_id(curr.target))
         edge_counter[key] += 1
         edge_time[key] += curr.cost.time_seconds
 
     edges = [
         GraphEdge(source=src, target=dst, count=cnt, total_time_seconds=edge_time[(src, dst)])
-        for (src, dst), cnt in edge_counter.items()
+        for (src, dst), cnt in sorted(edge_counter.items())
     ]
 
     return RouteGraph(
-        nodes=list(nodes_by_id.values()),
+        nodes=[nodes_by_id[node_id] for node_id in sorted(nodes_by_id)],
         edges=edges,
         sequence_length=len(route),
         run_count=1,
@@ -141,23 +150,24 @@ def build_aggregate_graph(
 ) -> RouteGraph:
     """Sum node + edge counts across every run in the experiment.
 
-    When `outcomes_by_run` is provided, also tallies per-edge pass_count and
-    fail_count (run-level granularity — one increment per unique edge per
-    run, regardless of how many times the run traversed it). This populates
-    the conformance fields on GraphEdge for Mode E rendering.
+    When ``outcomes_by_run`` is provided, also tallies post-hoc stored-label
+    counts per edge (one increment per unique edge per run). The API/table
+    layer carries their external/unknown/mixed provenance separately; the
+    labels do not influence route construction.
     """
     nodes_by_id: dict[str, GraphNode] = {}
     edge_counter: Counter[tuple[str, str]] = Counter()
     edge_time: dict[tuple[str, str], float] = defaultdict(float)
     edge_pass_count: Counter[tuple[str, str]] = Counter()
     edge_fail_count: Counter[tuple[str, str]] = Counter()
+    edge_error_count: Counter[tuple[str, str]] = Counter()
     total_sequence = 0
 
     for run_id, events in events_by_run.items():
         route = events_to_route(events)
         total_sequence += len(route)
         for evt in route:
-            node_id = _slug(evt.target or "")
+            node_id = _target_id(evt.target or "")
             if node_id not in nodes_by_id:
                 nodes_by_id[node_id] = GraphNode(
                     id=node_id,
@@ -175,10 +185,10 @@ def build_aggregate_graph(
         # Tally transitions for this run + remember the unique edge set so
         # we attribute outcome once per (run, edge), not once per transition.
         this_run_edges: set[tuple[str, str]] = set()
-        for prev, curr in zip(route, route[1:], strict=False):
+        for prev, curr in pairwise(route):
             if not prev.target or not curr.target:
                 continue
-            key = (_slug(prev.target), _slug(curr.target))
+            key = (_target_id(prev.target), _target_id(curr.target))
             edge_counter[key] += 1
             edge_time[key] += curr.cost.time_seconds
             this_run_edges.add(key)
@@ -188,9 +198,12 @@ def build_aggregate_graph(
             if outcome == "pass":
                 for key in this_run_edges:
                     edge_pass_count[key] += 1
-            elif outcome in ("fail", "error"):
+            elif outcome == "fail":
                 for key in this_run_edges:
                     edge_fail_count[key] += 1
+            elif outcome == "error":
+                for key in this_run_edges:
+                    edge_error_count[key] += 1
 
     edges = [
         GraphEdge(
@@ -198,14 +211,15 @@ def build_aggregate_graph(
             target=dst,
             count=cnt,
             total_time_seconds=edge_time[(src, dst)],
-            pass_count=edge_pass_count[(src, dst)],
-            fail_count=edge_fail_count[(src, dst)],
+            reported_pass_count=edge_pass_count[(src, dst)],
+            reported_fail_count=edge_fail_count[(src, dst)],
+            reported_error_count=edge_error_count[(src, dst)],
         )
-        for (src, dst), cnt in edge_counter.items()
+        for (src, dst), cnt in sorted(edge_counter.items())
     ]
 
     return RouteGraph(
-        nodes=list(nodes_by_id.values()),
+        nodes=[nodes_by_id[node_id] for node_id in sorted(nodes_by_id)],
         edges=edges,
         sequence_length=total_sequence,
         run_count=len(events_by_run),

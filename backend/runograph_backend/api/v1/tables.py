@@ -26,6 +26,7 @@ from runograph_backend.analysis import run_filter
 from runograph_backend.analysis import tables as tables_mod
 from runograph_backend.storage.db import session_scope
 from runograph_backend.storage.models import Run
+from runograph_backend.storage.schemas import ExperimentId, is_public_id
 
 router = APIRouter(prefix="/api/v1", tags=["tables"])
 
@@ -39,18 +40,26 @@ async def list_experiments(
     rows = (
         await session.execute(
             select(Run.experiment_id, func.count(Run.id))
+            .where(Run.experiment_id.is_not(None), Run.experiment_id != "")
             .group_by(Run.experiment_id)
             .order_by(Run.experiment_id)
         )
     ).all()
-    return [{"experiment_id": eid, "run_count": n} for eid, n in rows]
+    # Unsafe legacy identifiers remain available to the local export/re-ingest
+    # recovery path but are not advertised into a URL-based picker that cannot
+    # represent them faithfully.
+    return [
+        {"experiment_id": eid, "run_count": n}
+        for eid, n in rows
+        if is_public_id(eid)
+    ]
 
 
 @router.get("/tables/{sheet}")
 async def get_table(
     sheet: Sheet,
     session: Annotated[AsyncSession, Depends(session_scope)],
-    experiment: str = Query(...),
+    experiment: Annotated[ExperimentId, Query()],
     s: Annotated[list[str] | None, Query(alias="s")] = None,
     runs: str | None = Query(None, description="comma-separated run-id whitelist"),
 ) -> list[dict]:
