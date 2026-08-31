@@ -1,4 +1,4 @@
-"""CLI wrapper around storage.ingest.ingest_run for offline replay.
+"""CLI wrapper around storage.ingest.ingest_run for offline ingestion.
 
 Usage:
   uv run python -m scripts.ingest_run <run_dir>

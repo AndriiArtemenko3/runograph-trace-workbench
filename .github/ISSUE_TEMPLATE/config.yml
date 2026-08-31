@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/AndriiArtemenko3/runograph-trace-workbench/security/policy
+    about: Do not report vulnerabilities in a public issue.

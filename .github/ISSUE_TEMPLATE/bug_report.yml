@@ -1,0 +1,57 @@
+name: Bug report
+description: Report a reproducible defect using synthetic, non-sensitive data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a problem. Do not include credentials, private paths, real trace data, or customer information. Report security issues through the private process in SECURITY.md.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched the existing issues for this problem.
+          required: true
+        - label: This report contains only synthetic, non-sensitive data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
+  - type: input
+    id: revision
+    attributes:
+      label: Version or commit
+      description: The release, branch, or commit SHA where the problem occurs.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS plus relevant Python, Node.js, pnpm, and uv versions.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Synthetic reproduction
+      description: Provide the smallest safe sequence of steps that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional redacted context
+      description: Add safe logs or screenshots only if they contain no sensitive information.
